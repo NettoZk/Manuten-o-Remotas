@@ -358,13 +358,13 @@ export default function DashboardPage() {
                       return null
                     }}
                   />
-                  <Line 
-                    type="monotone" 
-                    dataKey="total" 
-                    stroke="hsl(var(--chart-2))" 
+                  <Line
+                    type="monotone"
+                    dataKey="total"
+                    stroke="#ffffff"
                     strokeWidth={2}
-                    dot={{ fill: "hsl(var(--chart-2))", strokeWidth: 2 }}
-                    activeDot={{ r: 6 }}
+                    dot={{ fill: "#ffffff", stroke: "#ffffff", r: 4 }}
+                    activeDot={{ r: 6, fill: "#ffffff" }}
                   />
                 </LineChart>
               </ResponsiveContainer>
