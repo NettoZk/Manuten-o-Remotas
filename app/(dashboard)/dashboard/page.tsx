@@ -150,10 +150,6 @@ export default function DashboardPage() {
             <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
             Atualizar
           </Button>
-          <div className="flex items-center gap-2 rounded-lg bg-card px-4 py-2 ring-1 ring-border">
-            <Activity className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-foreground">Sistema Online</span>
-          </div>
         </div>
       </div>
 
