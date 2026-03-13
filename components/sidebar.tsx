@@ -115,13 +115,18 @@ export function Sidebar() {
           <LogOut className="h-4 w-4" />
           Sair do sistema
         </Button>
-
         <div className="mt-6 px-4 pb-4 text-center">
           <p className="text-[10px] text-muted-foreground opacity-70">
             Engineered by
           </p>
           <p className="text-xs font-semibold text-primary">
             Adeuvaldo N. F. Paiva
+          </p>
+          <p className="text-[10px] text-muted-foreground opacity-70">
+            Instagram
+          </p>
+          <p className="text-xs font-semibold text-primary">
+            @adeuvaldo_paiva
           </p>
         </div>
       </div>
