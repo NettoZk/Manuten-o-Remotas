@@ -6,60 +6,87 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { Textarea } from "@/components/ui/textarea"
+import { Field, FieldLabel } from "@/components/ui/field"
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog"
-import { getEquipments, getMaintenancesByEquipment } from "@/lib/services"
-import type { Equipment, Maintenance } from "@/lib/types"
-import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle } from "lucide-react"
+import { getEquipments, getMaintenancesByEquipment, getEquipmentSituations, updateEquipmentSituationManual } from "@/lib/services"
+import type { Equipment, Maintenance, EquipmentSituation } from "@/lib/types"
+import { useAuth } from "@/contexts/auth-context"
+import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 
 export default function EquipmentsPage() {
+  const { user, hasPermission } = useAuth()
+  const isAdmin = hasPermission(["admin"])
+  
   const [equipments, setEquipments] = useState<Equipment[]>([])
   const [filteredEquipments, setFilteredEquipments] = useState<Equipment[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [situacaoFilter, setSituacaoFilter] = useState("")
+  const [equipmentSituations, setEquipmentSituations] = useState<EquipmentSituation[]>([])
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null)
   const [equipmentHistory, setEquipmentHistory] = useState<Maintenance[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
+  
+  // Estados para modal de alteração de situação
+  const [showChangeSituationDialog, setShowChangeSituationDialog] = useState(false)
+  const [equipmentToChangeSituation, setEquipmentToChangeSituation] = useState<Equipment | null>(null)
+  const [newSituacao, setNewSituacao] = useState("")
+  const [motivoAlteracao, setMotivoAlteracao] = useState("")
+  const [savingSituation, setSavingSituation] = useState(false)
 
   useEffect(() => {
-    async function loadEquipments() {
+    async function loadData() {
       try {
-        const data = await getEquipments()
-        setEquipments(data)
-        setFilteredEquipments(data)
+        const [equipmentsData, situationsData] = await Promise.all([
+          getEquipments(),
+          getEquipmentSituations()
+        ])
+        setEquipments(equipmentsData)
+        setFilteredEquipments(equipmentsData)
+        setEquipmentSituations(situationsData.filter((s) => s.ativo))
       } catch (error) {
-        console.error("Erro ao carregar equipamentos:", error)
+        console.error("Erro ao carregar dados:", error)
       } finally {
         setLoading(false)
       }
     }
-    loadEquipments()
+    loadData()
   }, [])
 
   useEffect(() => {
-    if (!search.trim()) {
-      setFilteredEquipments(equipments)
-      return
+    let filtered = equipments
+
+    // Filtrar por texto de busca
+    if (search.trim()) {
+      const searchLower = search.toLowerCase()
+      filtered = filtered.filter(
+        (e) =>
+          e.numeroRemota.toLowerCase().includes(searchLower) ||
+          e.modelo.toLowerCase().includes(searchLower) ||
+          e.operadoraAtual.toLowerCase().includes(searchLower) ||
+          (e.situacaoRemota && e.situacaoRemota.toLowerCase().includes(searchLower))
+      )
     }
 
-    const searchLower = search.toLowerCase()
-    const filtered = equipments.filter(
-      (e) =>
-        e.numeroRemota.toLowerCase().includes(searchLower) ||
-        e.modelo.toLowerCase().includes(searchLower) ||
-        e.operadoraAtual.toLowerCase().includes(searchLower)
-    )
+    // Filtrar por situação
+    if (situacaoFilter) {
+      filtered = filtered.filter((e) => e.situacaoRemota === situacaoFilter)
+    }
+
     setFilteredEquipments(filtered)
-  }, [search, equipments])
+  }, [search, situacaoFilter, equipments])
 
   const handleViewDetails = async (equipment: Equipment) => {
     setSelectedEquipment(equipment)
@@ -81,6 +108,50 @@ export default function EquipmentsPage() {
     setShowDetailsDialog(false)
     setSelectedEquipment(null)
     setEquipmentHistory([])
+  }
+
+  const handleOpenChangeSituation = (equipment: Equipment) => {
+    setEquipmentToChangeSituation(equipment)
+    setNewSituacao(equipment.situacaoRemota || "")
+    setMotivoAlteracao("")
+    setShowChangeSituationDialog(true)
+  }
+
+  const handleCloseChangeSituation = () => {
+    setShowChangeSituationDialog(false)
+    setEquipmentToChangeSituation(null)
+    setNewSituacao("")
+    setMotivoAlteracao("")
+  }
+
+  const handleSaveSituation = async () => {
+    if (!equipmentToChangeSituation || !newSituacao || !user) return
+
+    setSavingSituation(true)
+    try {
+      await updateEquipmentSituationManual(equipmentToChangeSituation.id, {
+        situacaoAnterior: equipmentToChangeSituation.situacaoRemota,
+        situacaoRemota: newSituacao,
+        situacaoAtualizadaPor: user.nome,
+        motivoAlteracaoSituacao: motivoAlteracao || undefined,
+      })
+
+      // Atualizar lista local
+      setEquipments((prev) =>
+        prev.map((e) =>
+          e.id === equipmentToChangeSituation.id
+            ? { ...e, situacaoRemota: newSituacao }
+            : e
+        )
+      )
+
+      handleCloseChangeSituation()
+    } catch (error) {
+      console.error("Erro ao alterar situação:", error)
+      alert("Erro ao alterar situação. Tente novamente.")
+    } finally {
+      setSavingSituation(false)
+    }
   }
 
   if (loading) {
@@ -111,15 +182,29 @@ export default function EquipmentsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="mb-4">
-            <div className="relative">
+          <div className="mb-4 flex flex-col gap-4 md:flex-row">
+            <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Buscar por número, modelo ou operadora..."
+                placeholder="Buscar por número, modelo, operadora ou situação..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9"
               />
+            </div>
+            <div className="w-full md:w-64">
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                value={situacaoFilter}
+                onChange={(e) => setSituacaoFilter(e.target.value)}
+              >
+                <option value="">Todas as situações</option>
+                {equipmentSituations.map((situation) => (
+                  <option key={situation.id} value={situation.nome}>
+                    {situation.nome}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -138,6 +223,7 @@ export default function EquipmentsPage() {
                     <th className="pb-3 font-medium">Lote</th>
                     <th className="pb-3 font-medium">Operadora</th>
                     <th className="pb-3 font-medium">Status</th>
+                    <th className="pb-3 font-medium">Situação</th>
                     <th className="pb-3 font-medium">Cadastro</th>
                     <th className="pb-3 font-medium text-right">Ações</th>
                   </tr>
@@ -157,21 +243,41 @@ export default function EquipmentsPage() {
                           {equipment.status}
                         </Badge>
                       </td>
+                      <td className="py-3">
+                        {equipment.situacaoRemota ? (
+                          <Badge variant="outline">{equipment.situacaoRemota}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
                       <td className="py-3 text-sm text-muted-foreground">
                         {format(equipment.dataCadastro, "dd/MM/yyyy", {
                           locale: ptBR,
                         })}
                       </td>
                       <td className="py-3 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleViewDetails(equipment)}
-                          className="gap-1"
-                        >
-                          <Eye className="h-4 w-4" />
-                          Ver Detalhes
-                        </Button>
+                        <div className="flex items-center justify-end gap-2">
+                          {isAdmin && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenChangeSituation(equipment)}
+                              className="gap-1"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                              Alterar Situação
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleViewDetails(equipment)}
+                            className="gap-1"
+                          >
+                            <Eye className="h-4 w-4" />
+                            Ver Detalhes
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -238,6 +344,14 @@ export default function EquipmentsPage() {
                         {selectedEquipment.status}
                       </Badge>
                     </div>
+<div className="space-y-1">
+                      <p className="text-xs uppercase tracking-wider text-muted-foreground">Situação</p>
+                      {selectedEquipment.situacaoRemota ? (
+                        <Badge variant="outline">{selectedEquipment.situacaoRemota}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">Não definida</span>
+                      )}
+                    </div>
                     <div className="space-y-1">
                       <p className="text-xs uppercase tracking-wider text-muted-foreground">Data de Cadastro</p>
                       <p className="font-medium">
@@ -245,6 +359,34 @@ export default function EquipmentsPage() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Informações de rastreabilidade da situação (se houver alteração manual) */}
+                  {selectedEquipment.situacaoAtualizadaEm && (
+                    <div className="mt-4 rounded-lg bg-muted/30 p-3 text-sm">
+                      <p className="font-medium text-muted-foreground mb-2">Última alteração de situação:</p>
+                      <div className="space-y-1">
+                        <p>
+                          <span className="text-muted-foreground">De:</span>{" "}
+                          <span className="font-medium">{selectedEquipment.situacaoAnterior || "Não definida"}</span>
+                          {" → "}
+                          <span className="text-muted-foreground">Para:</span>{" "}
+                          <span className="font-medium">{selectedEquipment.situacaoRemota}</span>
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Por:</span>{" "}
+                          <span className="font-medium">{selectedEquipment.situacaoAtualizadaPor}</span>
+                          {" em "}
+                          {format(selectedEquipment.situacaoAtualizadaEm, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                        </p>
+                        {selectedEquipment.motivoAlteracaoSituacao && (
+                          <p>
+                            <span className="text-muted-foreground">Motivo:</span>{" "}
+                            {selectedEquipment.motivoAlteracaoSituacao}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -370,6 +512,77 @@ export default function EquipmentsPage() {
               </Card>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Alteração de Situação (somente Admin) */}
+      <Dialog open={showChangeSituationDialog} onOpenChange={handleCloseChangeSituation}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <RefreshCw className="h-5 w-5 text-primary" />
+              Alterar Situação da Remota
+            </DialogTitle>
+            <DialogDescription>
+              Altere a situação da remota {equipmentToChangeSituation?.numeroRemota}
+            </DialogDescription>
+          </DialogHeader>
+
+          {equipmentToChangeSituation && (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-muted/50 p-3">
+                <p className="text-sm text-muted-foreground">Situação atual:</p>
+                <p className="font-medium">
+                  {equipmentToChangeSituation.situacaoRemota || "Não definida"}
+                </p>
+              </div>
+
+              <Field>
+                <FieldLabel>Nova Situação</FieldLabel>
+                <select
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  value={newSituacao}
+                  onChange={(e) => setNewSituacao(e.target.value)}
+                >
+                  <option value="">Selecione a situação...</option>
+                  {equipmentSituations.map((situation) => (
+                    <option key={situation.id} value={situation.nome}>
+                      {situation.nome}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field>
+                <FieldLabel>Motivo da Alteração (opcional)</FieldLabel>
+                <Textarea
+                  value={motivoAlteracao}
+                  onChange={(e) => setMotivoAlteracao(e.target.value)}
+                  placeholder="Descreva o motivo da alteração..."
+                  rows={3}
+                />
+              </Field>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseChangeSituation}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveSituation}
+              disabled={!newSituacao || savingSituation}
+            >
+              {savingSituation ? (
+                <>
+                  <Spinner className="mr-2 h-4 w-4" />
+                  Salvando...
+                </>
+              ) : (
+                "Salvar Alteração"
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

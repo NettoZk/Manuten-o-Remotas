@@ -11,6 +11,12 @@ export interface User {
 
 export type EquipmentStatus = "Nova" | "Usada"
 
+export interface EquipmentSituation {
+  id: string
+  nome: string
+  ativo: boolean
+}
+
 export interface Equipment {
   id: string
   numeroRemota: string
@@ -19,6 +25,11 @@ export interface Equipment {
   lote: string
   operadoraAtual: string
   status: EquipmentStatus
+  situacaoRemota?: string
+  situacaoAnterior?: string
+  situacaoAtualizadaEm?: Date
+  situacaoAtualizadaPor?: string
+  motivoAlteracaoSituacao?: string
   dataCadastro: Date
 }
 

@@ -41,9 +41,13 @@ import {
   createOperator,
   updateOperator,
   deleteOperator,
+  getEquipmentSituations,
+  createEquipmentSituation,
+  updateEquipmentSituation,
+  deleteEquipmentSituation,
 } from "@/lib/services"
-import type { Defect, Service, Operator } from "@/lib/types"
-import { Settings, Plus, Pencil, Trash2, AlertTriangle, Wrench, Signal } from "lucide-react"
+import type { Defect, Service, Operator, EquipmentSituation } from "@/lib/types"
+import { Settings, Plus, Pencil, Trash2, AlertTriangle, Wrench, Signal, MapPin } from "lucide-react"
 
 type ListItem = Defect | Service | Operator
 
@@ -279,18 +283,21 @@ export default function ListsPage() {
   const [defects, setDefects] = useState<Defect[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [operators, setOperators] = useState<Operator[]>([])
+  const [situations, setSituations] = useState<EquipmentSituation[]>([])
   const [loading, setLoading] = useState(true)
 
   const loadData = async () => {
     try {
-      const [defectsData, servicesData, operatorsData] = await Promise.all([
+      const [defectsData, servicesData, operatorsData, situationsData] = await Promise.all([
         getDefects(),
         getServices(),
         getOperators(),
+        getEquipmentSituations(),
       ])
       setDefects(defectsData)
       setServices(servicesData)
       setOperators(operatorsData)
+      setSituations(situationsData)
     } catch (error) {
       console.error("Erro ao carregar dados:", error)
     } finally {
@@ -324,6 +331,7 @@ export default function ListsPage() {
           <TabsTrigger value="defects">Defeitos</TabsTrigger>
           <TabsTrigger value="services">Serviços</TabsTrigger>
           <TabsTrigger value="operators">Operadoras</TabsTrigger>
+          <TabsTrigger value="situations">Situações</TabsTrigger>
         </TabsList>
 
         <TabsContent value="defects">
@@ -361,6 +369,19 @@ export default function ListsPage() {
             onAdd={createOperator}
             onUpdate={updateOperator}
             onDelete={deleteOperator}
+            onRefresh={loadData}
+          />
+        </TabsContent>
+
+        <TabsContent value="situations">
+          <ListManager
+            title="Situações da Remota"
+            description="Lista de situações que podem ser atribuídas às remotas após manutenção"
+            icon={<MapPin className="h-5 w-5" />}
+            items={situations}
+            onAdd={createEquipmentSituation}
+            onUpdate={updateEquipmentSituation}
+            onDelete={deleteEquipmentSituation}
             onRefresh={loadData}
           />
         </TabsContent>

@@ -21,6 +21,7 @@ import type {
   Service,
   Operator,
   ChecklistItem,
+  EquipmentSituation,
 } from "./types"
 import bcrypt from "bcryptjs"
 
@@ -123,11 +124,15 @@ export async function getEquipments(): Promise<Equipment[]> {
   const snapshot = await getDocs(
     query(collection(db, "equipments"), orderBy("dataCadastro", "desc"))
   )
-  return snapshot.docs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-    dataCadastro: doc.data().dataCadastro?.toDate() || new Date(),
-  })) as Equipment[]
+  return snapshot.docs.map((doc) => {
+    const data = doc.data()
+    return {
+      id: doc.id,
+      ...data,
+      dataCadastro: data.dataCadastro?.toDate() || new Date(),
+      situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
+    }
+  }) as Equipment[]
 }
 
 export async function updateEquipment(
@@ -135,6 +140,25 @@ export async function updateEquipment(
   data: Partial<Omit<Equipment, "id" | "numeroRemota" | "dataCadastro">>
 ): Promise<void> {
   await updateDoc(doc(db, "equipments", equipmentId), data)
+}
+
+export async function updateEquipmentSituationManual(
+  equipmentId: string,
+  data: {
+    situacaoAnterior: string | undefined
+    situacaoRemota: string
+    situacaoAtualizadaPor: string
+    motivoAlteracaoSituacao?: string
+  }
+): Promise<void> {
+  const cleanedData = removeUndefinedFields({
+    situacaoAnterior: data.situacaoAnterior || "Não definida",
+    situacaoRemota: data.situacaoRemota,
+    situacaoAtualizadaEm: Timestamp.now(),
+    situacaoAtualizadaPor: data.situacaoAtualizadaPor,
+    motivoAlteracaoSituacao: data.motivoAlteracaoSituacao || undefined,
+  })
+  await updateDoc(doc(db, "equipments", equipmentId), cleanedData)
 }
 
 // ==================== MAINTENANCES ====================
@@ -168,6 +192,7 @@ export async function finalizeMaintenance(
     operadoraDepois: string
     checklist: ChecklistItem
     observacoes: string
+    situacaoRemota?: string
   }
 ): Promise<void> {
   const cleanedData = removeUndefinedFields(data)
@@ -318,20 +343,99 @@ export async function deleteOperator(id: string): Promise<void> {
   await deleteDoc(doc(db, "operators", id))
 }
 
+// ==================== EQUIPMENT SITUATIONS ====================
+export async function getEquipmentSituations(): Promise<EquipmentSituation[]> {
+  const snapshot = await getDocs(collection(db, "equipment_status"))
+  return snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  })) as EquipmentSituation[]
+}
+
+export async function createEquipmentSituation(nome: string): Promise<string> {
+  const docRef = await addDoc(collection(db, "equipment_status"), {
+    nome,
+    ativo: true,
+  })
+  return docRef.id
+}
+
+export async function updateEquipmentSituation(id: string, data: Partial<EquipmentSituation>): Promise<void> {
+  await updateDoc(doc(db, "equipment_status", id), data)
+}
+
+export async function deleteEquipmentSituation(id: string): Promise<void> {
+  await deleteDoc(doc(db, "equipment_status", id))
+}
+
 // ==================== DASHBOARD STATS ====================
 export async function getDashboardStats() {
-  const [equipments, maintenancesInProgress, maintenancesThisMonth, recentMaintenances] =
+  const [equipments, maintenancesInProgress, maintenancesThisMonth, allMaintenances] =
     await Promise.all([
       getEquipments(),
       getMaintenancesInProgress(),
       getMaintenancesThisMonth(),
-      getAllMaintenances().then((m) => m.slice(0, 5)),
+      getAllMaintenances(),
     ])
+
+  // Calcular remotas por situação
+  const situacaoCount: Record<string, number> = {}
+  equipments.forEach((eq) => {
+    const situacao = eq.situacaoRemota || "Não definida"
+    situacaoCount[situacao] = (situacaoCount[situacao] || 0) + 1
+  })
+  const remotasPorSituacao = Object.entries(situacaoCount).map(([name, value]) => ({
+    name,
+    value,
+  }))
+
+  // Calcular manutenções por técnico
+  const tecnicoCount: Record<string, number> = {}
+  allMaintenances.forEach((m) => {
+    const tecnico = m.tecnicoNome || "Desconhecido"
+    tecnicoCount[tecnico] = (tecnicoCount[tecnico] || 0) + 1
+  })
+  const manutencoesPorTecnico = Object.entries(tecnicoCount)
+    .map(([name, total]) => ({ name, total }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10) // Top 10 técnicos
+
+  // Calcular manutenções por mês (últimos 6 meses)
+  const now = new Date()
+  const monthsData: Record<string, number> = {}
+  for (let i = 5; i >= 0; i--) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+    monthsData[key] = 0
+  }
+  
+  allMaintenances.forEach((m) => {
+    if (m.dataFinalizacao) {
+      const date = new Date(m.dataFinalizacao)
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+      if (monthsData[key] !== undefined) {
+        monthsData[key]++
+      }
+    }
+  })
+
+  const mesesNomes = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+  const manutencoesPorMes = Object.entries(monthsData).map(([key, total]) => {
+    const [year, month] = key.split("-")
+    return {
+      mes: `${mesesNomes[parseInt(month) - 1]}/${year.slice(2)}`,
+      total,
+    }
+  })
 
   return {
     totalEquipments: equipments.length,
+    totalMaintenances: allMaintenances.length,
     inProgress: maintenancesInProgress.length,
     completedThisMonth: maintenancesThisMonth,
-    recentMaintenances,
+    recentMaintenances: allMaintenances.slice(0, 5),
+    remotasPorSituacao,
+    manutencoesPorTecnico,
+    manutencoesPorMes,
   }
 }

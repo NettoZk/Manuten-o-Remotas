@@ -10,8 +10,8 @@ import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Wrench, CheckSquare } from "lucide-react"
-import { finalizeMaintenance, updateEquipment, getServices } from "@/lib/services"
-import type { Maintenance, Equipment, Defect, Operator, Service, ChecklistItem, ChecklistStatus } from "@/lib/types"
+import { finalizeMaintenance, updateEquipment, getServices, getEquipmentSituations } from "@/lib/services"
+import type { Maintenance, Equipment, Defect, Operator, Service, ChecklistItem, ChecklistStatus, EquipmentSituation } from "@/lib/types"
 
 interface MaintenanceFormProps {
   maintenance: Maintenance
@@ -41,6 +41,7 @@ export function MaintenanceForm({
 }: MaintenanceFormProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [services, setServices] = useState<Service[]>([])
+  const [equipmentSituations, setEquipmentSituations] = useState<EquipmentSituation[]>([])
   
   const [defeitoEncontrado, setDefeitoEncontrado] = useState(maintenance.defeitoEncontrado || "")
   const [defeitoEncontradoOutro, setDefeitoEncontradoOutro] = useState(maintenance.defeitoEncontradoOutro || "")
@@ -49,17 +50,22 @@ export function MaintenanceForm({
   const [operadoraDepois, setOperadoraDepois] = useState(maintenance.operadoraDepois || equipment.operadoraAtual)
   const [checklist, setChecklist] = useState<ChecklistItem>(maintenance.checklist)
   const [observacoes, setObservacoes] = useState(maintenance.observacoes || "")
+  const [situacaoRemota, setSituacaoRemota] = useState(equipment.situacaoRemota || "")
 
   useEffect(() => {
-    async function loadServices() {
+    async function loadData() {
       try {
-        const data = await getServices()
-        setServices(data.filter((s) => s.ativo))
+        const [servicesData, situationsData] = await Promise.all([
+          getServices(),
+          getEquipmentSituations()
+        ])
+        setServices(servicesData.filter((s) => s.ativo))
+        setEquipmentSituations(situationsData.filter((s) => s.ativo))
       } catch (error) {
-        console.error("Erro ao carregar serviços:", error)
+        console.error("Erro ao carregar dados:", error)
       }
     }
-    loadServices()
+    loadData()
   }, [])
 
   const handleChecklistChange = (key: keyof ChecklistItem, value: ChecklistStatus) => {
@@ -98,16 +104,30 @@ export function MaintenanceForm({
         operadoraDepois,
         checklist,
         observacoes,
+        situacaoRemota: situacaoRemota || undefined,
       })
+
+      // Preparar dados para atualização do equipamento
+      const equipmentUpdate: { status?: "Usada"; operadoraAtual?: string; situacaoRemota?: string } = {}
 
       // Update equipment status to "Usada" if it was "Nova"
       if (equipment.status === "Nova") {
-        await updateEquipment(equipment.id, { status: "Usada" })
+        equipmentUpdate.status = "Usada"
       }
 
       // Update operator if changed
       if (operadoraDepois !== equipment.operadoraAtual) {
-        await updateEquipment(equipment.id, { operadoraAtual: operadoraDepois })
+        equipmentUpdate.operadoraAtual = operadoraDepois
+      }
+
+      // Update situacaoRemota if provided
+      if (situacaoRemota) {
+        equipmentUpdate.situacaoRemota = situacaoRemota
+      }
+
+      // Atualizar equipamento se houver mudanças
+      if (Object.keys(equipmentUpdate).length > 0) {
+        await updateEquipment(equipment.id, equipmentUpdate)
       }
 
       onFinalized()
@@ -213,6 +233,25 @@ export function MaintenanceForm({
                 Operadora será alterada de {equipment.operadoraAtual} para {operadoraDepois}
               </p>
             )}
+          </Field>
+
+          <Field>
+            <FieldLabel>Situação da Remota (opcional)</FieldLabel>
+            <select
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              value={situacaoRemota}
+              onChange={(e) => setSituacaoRemota(e.target.value)}
+            >
+              <option value="">Selecione a situação...</option>
+              {equipmentSituations.map((situation) => (
+                <option key={situation.id} value={situation.nome}>
+                  {situation.nome}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Define a situação atual da remota após análise técnica
+            </p>
           </Field>
 
           <Field>
