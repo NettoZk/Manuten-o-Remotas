@@ -208,14 +208,13 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {stats?.remotasPorSituacao && stats.remotasPorSituacao.length > 0 ? (
-              <div className="h-[300px]">
+              <div className="h-75">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={stats.remotasPorSituacao}
                       cx="50%"
                       cy="50%"
-                      labelLine={true}
                       outerRadius={90}
                       innerRadius={40}
                       fill="#8884d8"
@@ -248,7 +247,7 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
               </div>
             ) : (
-              <div className="flex h-[300px] items-center justify-center">
+              <div className="flex h-75 items-center justify-center">
                 <p className="text-sm text-muted-foreground">Sem dados disponiveis</p>
               </div>
             )}
@@ -274,7 +273,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {stats?.manutencoesPorTecnico && stats.manutencoesPorTecnico.length > 0 ? (
-              <div className="h-[300px]">
+              <div className="h-75">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={stats.manutencoesPorTecnico} layout="vertical" margin={{ left: 0, right: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -308,7 +307,7 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
               </div>
             ) : (
-              <div className="flex h-[300px] items-center justify-center">
+              <div className="flex h-75 items-center justify-center">
                 <p className="text-sm text-muted-foreground">Sem dados disponiveis</p>
               </div>
             )}
@@ -335,12 +334,22 @@ export default function DashboardPage() {
         </CardHeader>
         <CardContent>
           {stats?.manutencoesPorMes && stats.manutencoesPorMes.length > 0 ? (
-            <div className="h-[300px]">
+            <div className="h-75">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={stats.manutencoesPorMes} margin={{ left: 0, right: 20, top: 10, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
-                  <XAxis dataKey="mes" className="text-xs" tick={{ fontSize: 11 }} />
-                  <YAxis className="text-xs" tick={{ fontSize: 11 }} />
+                  <CartesianGrid stroke="#ffffff20" strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="mes"
+                    tick={{ fill: "#e5e7eb", fontSize: 11 }}
+                    axisLine={{ stroke: "#ffffff30" }}
+                    tickLine={{ stroke: "#ffffff30" }}
+                  />
+
+                  <YAxis
+                    tick={{ fill: "#e5e7eb", fontSize: 11 }}
+                    axisLine={{ stroke: "#ffffff30" }}
+                    tickLine={{ stroke: "#ffffff30" }}
+                  />
                   <ChartTooltip
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
@@ -370,7 +379,7 @@ export default function DashboardPage() {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="flex h-[300px] items-center justify-center">
+            <div className="flex h-75 items-center justify-center">
               <p className="text-sm text-muted-foreground">Sem dados disponiveis</p>
             </div>
           )}
