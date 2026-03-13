@@ -118,7 +118,7 @@ export default function SetupPage() {
   if (error) {
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:64px_64px]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-size-[64px_64px]" />
         
         <Card className="w-full max-w-md border-destructive/50 bg-card/50 backdrop-blur-sm">
           <CardContent className="flex flex-col items-center py-12">
@@ -151,7 +151,7 @@ export default function SetupPage() {
   if (hasAdmin) {
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:64px_64px]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-size-[64px_64px]" />
         
         <Card className="w-full max-w-md border-border/50 bg-card/50 backdrop-blur-sm">
           <CardContent className="flex flex-col items-center py-12">
@@ -173,7 +173,7 @@ export default function SetupPage() {
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:64px_64px]" />
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-size-[64px_64px]" />
       <div className="absolute -left-32 -top-32 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
       <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
 
