@@ -268,6 +268,7 @@ export default function HistoryPage() {
                 <thead>
                   <tr className="border-b text-left">
                     <th className="pb-3 font-medium">Remota</th>
+                    <th className="pb-3 font-medium">N° Manut.</th>
                     <th className="pb-3 font-medium">Modelo</th>
                     <th className="pb-3 font-medium">Técnico</th>
                     <th className="pb-3 font-medium">Defeito</th>
@@ -282,6 +283,11 @@ export default function HistoryPage() {
                     return (
                       <tr key={maintenance.id} className="border-b last:border-0">
                         <td className="py-3 font-medium">{maintenance.numeroRemota}</td>
+                        <td className="py-3">
+                          <Badge variant="outline" className="font-mono">
+                            #{maintenance.numeroManutencao || "-"}
+                          </Badge>
+                        </td>
                         <td className="py-3">{equipment?.modelo || "-"}</td>
                         <td className="py-3">{maintenance.tecnicoNome}</td>
                         <td className="py-3">

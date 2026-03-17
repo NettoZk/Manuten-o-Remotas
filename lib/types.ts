@@ -11,6 +11,9 @@ export interface User {
 
 export type EquipmentStatus = "Nova" | "Usada"
 
+// Estado administrativo do registro
+export type EstadoRegistro = "ativo" | "substituido_garantia" | "cancelado" | "erro_cadastro" | "arquivado"
+
 export interface EquipmentSituation {
   id: string
   nome: string
@@ -31,6 +34,8 @@ export interface Equipment {
   situacaoAtualizadaPor?: string
   motivoAlteracaoSituacao?: string
   dataCadastro: Date
+  estadoRegistro: EstadoRegistro // Novo campo para controle administrativo
+  remotaSubstituidaId?: string // ID da remota que esta substituiu (em caso de garantia)
 }
 
 export type ChecklistStatus = "OK" | "Falha" | "Não testado"
@@ -63,6 +68,7 @@ export interface Maintenance {
   checklist: ChecklistItem
   observacoes: string
   status: "em_andamento" | "finalizada"
+  numeroManutencao: number // Contador incremental por remota
 }
 
 export interface Defect {
@@ -81,4 +87,43 @@ export interface Operator {
   id: string
   nome: string
   ativo: boolean
+}
+
+// Interface para registro de importações em massa
+export interface ImportLog {
+  id: string
+  nomeArquivo: string
+  usuarioId: string
+  usuarioNome: string
+  dataHora: Date
+  totalRegistros: number
+  inseridos: number
+  atualizados: number
+  erros: number
+  detalhesErros?: string[]
+}
+
+// Interface para validação de importação
+export interface ImportValidationResult {
+  isValid: boolean
+  totalRows: number
+  validRows: number
+  errors: ImportValidationError[]
+}
+
+export interface ImportValidationError {
+  row: number
+  field: string
+  message: string
+  value?: string
+}
+
+// Interface para resultado de importação
+export interface ImportResult {
+  success: boolean
+  totalProcessed: number
+  inserted: number
+  updated: number
+  errors: number
+  errorDetails: string[]
 }

@@ -13,7 +13,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
+import { AlertTriangle } from "lucide-react"
 import { createEquipment } from "@/lib/services"
 import type { Equipment, Operator, EquipmentStatus } from "@/lib/types"
 
@@ -67,6 +69,8 @@ export function NewEquipmentDialog({
         operadoraAtual,
         status,
         dataCadastro: new Date(),
+        estadoRegistro: "ativo",
+        situacaoRemota: status === "Usada" ? "Triagem" : undefined,
       })
 
       // Reset form
@@ -149,6 +153,14 @@ export function NewEquipmentDialog({
                 </select>
               </Field>
             </div>
+            {status === "Usada" && (
+              <Alert variant="default" className="border-yellow-500/50 bg-yellow-500/10">
+                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                <AlertDescription className="text-yellow-600">
+                  Remotas usadas sao automaticamente cadastradas com situacao <strong>Triagem</strong>.
+                </AlertDescription>
+              </Alert>
+            )}
             <Field>
               <FieldLabel className="text-sm text-muted-foreground">Operadora</FieldLabel>
               <select

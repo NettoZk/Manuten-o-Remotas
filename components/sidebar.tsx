@@ -14,6 +14,7 @@ import {
   Settings,
   LogOut,
   ChevronRight,
+  FileSpreadsheet,
 } from "lucide-react"
 
 const navigation = [
@@ -21,6 +22,7 @@ const navigation = [
   { name: "Manutencao", href: "/manutencao", icon: Wrench, roles: ["admin", "tecnico"] },
   { name: "Equipamentos", href: "/equipamentos", icon: Radio, roles: ["admin", "tecnico", "usuario"] },
   { name: "Historico", href: "/historico", icon: History, roles: ["admin", "tecnico", "usuario"] },
+  { name: "Importacoes", href: "/importacoes", icon: FileSpreadsheet, roles: ["admin"] },
   { name: "Usuarios", href: "/usuarios", icon: Users, roles: ["admin"] },
   { name: "Listas", href: "/listas", icon: Settings, roles: ["admin"] },
 ]

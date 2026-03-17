@@ -10,7 +10,7 @@ import { getDashboardStats } from "@/lib/services"
 import type { Maintenance } from "@/lib/types"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { Radio, Wrench, CheckCircle, Clock, TrendingUp, Activity, RefreshCw, PieChartIcon, BarChart3, Users } from "lucide-react"
+import { Radio, Wrench, CheckCircle, Clock, TrendingUp, Activity, RefreshCw, PieChartIcon, BarChart3, Users, ShieldCheck, Archive, AlertTriangle, Trash2, Calculator } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface DashboardStats {
@@ -22,6 +22,14 @@ interface DashboardStats {
   remotasPorSituacao: { name: string; value: number }[]
   manutencoesPorTecnico: { name: string; total: number }[]
   manutencoesPorMes: { mes: string; total: number }[]
+  // Novos indicadores
+  remotasRecuperadas: number
+  remotasSucateadas: number
+  remotasTriagem: number
+  remotasGarantia: number
+  remotasArquivadas: number
+  mediaManutencoesPorRemota: string
+  totalEquipmentsTodos: number
 }
 
 // Cores vibrantes para os gráficos (otimizadas para tema escuro)
@@ -63,6 +71,13 @@ export default function DashboardPage() {
           remotasPorSituacao: [],
           manutencoesPorTecnico: [],
           manutencoesPorMes: [],
+          remotasRecuperadas: 0,
+          remotasSucateadas: 0,
+          remotasTriagem: 0,
+          remotasGarantia: 0,
+          remotasArquivadas: 0,
+          mediaManutencoesPorRemota: "0",
+          totalEquipmentsTodos: 0,
         })
       }
     } finally {
@@ -98,7 +113,7 @@ export default function DashboardPage() {
     {
       title: "Total de Remotas",
       value: stats?.totalEquipments || 0,
-      description: "Remotas cadastradas no sistema",
+      description: "Remotas ativas no sistema",
       icon: Radio,
       color: "text-primary",
       bgColor: "bg-primary/10",
@@ -126,6 +141,51 @@ export default function DashboardPage() {
       icon: CheckCircle,
       color: "text-success",
       bgColor: "bg-success/10",
+    },
+  ]
+
+  const secondaryStats = [
+    {
+      title: "Recuperadas",
+      value: stats?.remotasRecuperadas || 0,
+      icon: CheckCircle,
+      color: "text-green-500",
+      bgColor: "bg-green-500/10",
+    },
+    {
+      title: "Em Triagem",
+      value: stats?.remotasTriagem || 0,
+      icon: AlertTriangle,
+      color: "text-yellow-500",
+      bgColor: "bg-yellow-500/10",
+    },
+    {
+      title: "Sucateadas",
+      value: stats?.remotasSucateadas || 0,
+      icon: Trash2,
+      color: "text-red-500",
+      bgColor: "bg-red-500/10",
+    },
+    {
+      title: "Substituidas Garantia",
+      value: stats?.remotasGarantia || 0,
+      icon: ShieldCheck,
+      color: "text-purple-500",
+      bgColor: "bg-purple-500/10",
+    },
+    {
+      title: "Arquivadas",
+      value: stats?.remotasArquivadas || 0,
+      icon: Archive,
+      color: "text-gray-500",
+      bgColor: "bg-gray-500/10",
+    },
+    {
+      title: "Media Manut./Remota",
+      value: stats?.mediaManutencoesPorRemota || "0",
+      icon: Calculator,
+      color: "text-cyan-500",
+      bgColor: "bg-cyan-500/10",
     },
   ]
 
@@ -182,6 +242,34 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {/* Indicadores Secundários */}
+      <Card className="border-border/50 bg-card">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg font-semibold text-foreground">
+            Indicadores de Situacao
+          </CardTitle>
+          <CardDescription className="text-sm text-muted-foreground">
+            Visao detalhada do status das remotas
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+            {secondaryStats.map((stat) => (
+              <div
+                key={stat.title}
+                className="flex flex-col items-center rounded-lg border border-border/50 p-4 text-center"
+              >
+                <div className={cn("mb-2 rounded-lg p-2", stat.bgColor)}>
+                  <stat.icon className={cn("h-5 w-5", stat.color)} />
+                </div>
+                <span className="text-2xl font-bold text-foreground">{stat.value}</span>
+                <span className="text-xs text-muted-foreground">{stat.title}</span>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Charts Section */}
       <div className="grid gap-4 md:grid-cols-2">
