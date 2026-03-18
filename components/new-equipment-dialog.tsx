@@ -49,6 +49,9 @@ export function NewEquipmentDialog({
 
     setIsLoading(true)
     try {
+      // A situação será definida automaticamente pelo service:
+      // - Se status = usada -> situação = triagem
+      // - Se status = nova -> situação = nova
       const id = await createEquipment({
         numeroRemota,
         modelo,
@@ -58,6 +61,9 @@ export function NewEquipmentDialog({
         status,
       })
 
+      // Definir situação automática para feedback local
+      const situacaoRemota = status === "Usada" ? "triagem" : "nova"
+
       onCreated({
         id,
         numeroRemota,
@@ -66,6 +72,7 @@ export function NewEquipmentDialog({
         lote,
         operadoraAtual,
         status,
+        situacaoRemota,
         dataCadastro: new Date(),
       })
 

@@ -19,7 +19,10 @@ import {
 import { getEquipments, getMaintenancesByEquipment, getEquipmentSituations, updateEquipmentSituationManual } from "@/lib/services"
 import type { Equipment, Maintenance, EquipmentSituation } from "@/lib/types"
 import { useAuth } from "@/contexts/auth-context"
-import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw } from "lucide-react"
+import { EditEquipmentDialog } from "@/components/edit-equipment-dialog"
+import { DeleteEquipmentDialog } from "@/components/delete-equipment-dialog"
+import { ImportEquipmentDialog } from "@/components/import-equipment-dialog"
+import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -45,6 +48,17 @@ export default function EquipmentsPage() {
   const [newSituacao, setNewSituacao] = useState("")
   const [motivoAlteracao, setMotivoAlteracao] = useState("")
   const [savingSituation, setSavingSituation] = useState(false)
+  
+  // Estados para modal de edição
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [equipmentToEdit, setEquipmentToEdit] = useState<Equipment | null>(null)
+  
+  // Estados para modal de exclusão
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [equipmentToDelete, setEquipmentToDelete] = useState<Equipment | null>(null)
+  
+  // Estados para modal de importação
+  const [showImportDialog, setShowImportDialog] = useState(false)
 
   useEffect(() => {
     async function loadData() {
@@ -154,6 +168,43 @@ export default function EquipmentsPage() {
     }
   }
 
+  // Handlers de edição
+  const handleOpenEdit = (equipment: Equipment) => {
+    setEquipmentToEdit(equipment)
+    setShowEditDialog(true)
+  }
+
+  const handleEquipmentUpdated = (updatedEquipment: Equipment) => {
+    setEquipments((prev) =>
+      prev.map((e) => (e.id === updatedEquipment.id ? updatedEquipment : e))
+    )
+  }
+
+  // Handlers de exclusão
+  const handleOpenDelete = (equipment: Equipment) => {
+    setEquipmentToDelete(equipment)
+    setShowDeleteDialog(true)
+  }
+
+  const handleEquipmentDeleted = (equipmentId: string, archived: boolean) => {
+    if (archived) {
+      // Se foi arquivado, atualiza o estado local
+      setEquipments((prev) =>
+        prev.filter((e) => e.id !== equipmentId)
+      )
+    } else {
+      // Se foi excluído, remove da lista
+      setEquipments((prev) => prev.filter((e) => e.id !== equipmentId))
+    }
+  }
+
+  // Handler de importação
+  const handleImportComplete = async () => {
+    // Recarregar a lista de equipamentos
+    const equipmentsData = await getEquipments()
+    setEquipments(equipmentsData)
+  }
+
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center">
@@ -164,11 +215,19 @@ export default function EquipmentsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Equipamentos</h1>
-        <p className="text-muted-foreground">
-          Visualize todas as remotas cadastradas no sistema
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Equipamentos</h1>
+          <p className="text-muted-foreground">
+            Visualize todas as remotas cadastradas no sistema
+          </p>
+        </div>
+        {isAdmin && (
+          <Button onClick={() => setShowImportDialog(true)} className="gap-2">
+            <Upload className="h-4 w-4" />
+            Importar Planilha
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -256,27 +315,44 @@ export default function EquipmentsPage() {
                         })}
                       </td>
                       <td className="py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {isAdmin && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleOpenChangeSituation(equipment)}
-                              className="gap-1"
-                            >
-                              <RefreshCw className="h-4 w-4" />
-                              Alterar Situação
-                            </Button>
-                          )}
+                        <div className="flex items-center justify-end gap-1">
                           <Button
                             size="sm"
-                            variant="outline"
+                            variant="ghost"
                             onClick={() => handleViewDetails(equipment)}
-                            className="gap-1"
+                            title="Ver Detalhes"
                           >
                             <Eye className="h-4 w-4" />
-                            Ver Detalhes
                           </Button>
+                          {isAdmin && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleOpenEdit(equipment)}
+                                title="Editar"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleOpenChangeSituation(equipment)}
+                                title="Alterar Situação"
+                              >
+                                <RefreshCw className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleOpenDelete(equipment)}
+                                title="Excluir"
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -585,6 +661,30 @@ export default function EquipmentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog de Edição */}
+      <EditEquipmentDialog
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        equipment={equipmentToEdit}
+        equipmentSituations={equipmentSituations}
+        onUpdated={handleEquipmentUpdated}
+      />
+
+      {/* Dialog de Exclusão */}
+      <DeleteEquipmentDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        equipment={equipmentToDelete}
+        onDeleted={handleEquipmentDeleted}
+      />
+
+      {/* Dialog de Importação */}
+      <ImportEquipmentDialog
+        open={showImportDialog}
+        onOpenChange={setShowImportDialog}
+        onImported={handleImportComplete}
+      />
     </div>
   )
 }
