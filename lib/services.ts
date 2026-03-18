@@ -315,7 +315,6 @@ export async function forceFinalizeMaintenance(
     finalizadoForcadoPor: userId,
     finalizadoForcadoNome: userName,
     motivoFinalizacaoForcada: motivo,
-    observacoes: `[FINALIZAÇÃO FORÇADA por ${userName}]: ${motivo}`,
   })
 
   // Desbloquear a remota
