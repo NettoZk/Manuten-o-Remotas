@@ -9,7 +9,7 @@ import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
-import { Search, Plus, Clock, Radio, Eye, ArrowRight } from "lucide-react"
+import { Search, Plus, Clock, Radio, Eye, ArrowRight, Lock, AlertTriangle } from "lucide-react"
 import {
   getEquipmentByNumber,
   getMaintenancesByEquipment,
@@ -18,12 +18,16 @@ import {
   getOperators,
   getMaintenancesInProgress,
   getEquipments,
+  forceFinalizeMaintenance,
 } from "@/lib/services"
 import type { Equipment, Maintenance, Defect, Operator, ChecklistItem } from "@/lib/types"
 import { NewEquipmentDialog } from "@/components/new-equipment-dialog"
 import { MaintenanceForm } from "@/components/maintenance-form"
 import { EquipmentInfo } from "@/components/equipment-info"
 import { MaintenanceHistory } from "@/components/maintenance-history"
+import { ForceFinishedDialog } from "@/components/force-finalize-dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
@@ -42,6 +46,12 @@ export default function MaintenancePage() {
   const [equipmentsList, setEquipmentsList] = useState<Equipment[]>([])
   const [loadingInProgress, setLoadingInProgress] = useState(true)
   const [viewMode, setViewMode] = useState<"edit" | "view">("edit")
+  const [showForceFinalize, setShowForceFinalize] = useState(false)
+  const [maintenanceToForceFinalize, setMaintenanceToForceFinalize] = useState<Maintenance | null>(null)
+  const [equipmentToForceFinalize, setEquipmentToForceFinalize] = useState<Equipment | null>(null)
+
+  // Verificar se o usuário é admin
+  const isAdmin = user?.tipo === "admin"
 
   useEffect(() => {
     async function loadData() {
@@ -282,6 +292,25 @@ export default function MaintenancePage() {
     return equipmentsList.find((e) => e.numeroRemota === maintenance.numeroRemota)
   }
 
+  const handleForceFinalized = async () => {
+    if (!equipment) return
+
+    // Recarregar dados
+    const updatedEquipment = await getEquipmentByNumber(equipment.numeroRemota)
+    if (updatedEquipment) {
+      setEquipment(updatedEquipment)
+    }
+    
+    const history = await getMaintenancesByEquipment(equipment.numeroRemota)
+    setMaintenanceHistory(history)
+    setCurrentMaintenance(null)
+    await refreshMaintenancesInProgress()
+    
+    // Atualizar lista de equipamentos
+    const equipmentsData = await getEquipments()
+    setEquipmentsList(equipmentsData)
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -438,14 +467,103 @@ export default function MaintenancePage() {
 
           {viewMode === "edit" && (
             <>
-              {currentMaintenance ? (
-                <MaintenanceForm
-                  maintenance={currentMaintenance}
-                  equipment={equipment}
-                  defects={defects}
-                  operators={operators}
-                  onFinalized={handleMaintenanceFinalized}
-                />
+              {/* Verificar se a remota está bloqueada por outro técnico */}
+              {equipment.emManutencaoPor && 
+               equipment.emManutencaoPor !== user?.id && 
+               !currentMaintenance ? (
+                <Card className="border-destructive/30 bg-destructive/5">
+                  <CardContent className="py-6">
+                    <div className="flex items-start gap-4">
+                      <div className="rounded-full bg-destructive/10 p-3">
+                        <Lock className="h-6 w-6 text-destructive" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-destructive">
+                          Remota Bloqueada
+                        </h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Esta remota está em manutenção por <strong>{equipment.emManutencaoNome}</strong>
+                          {equipment.emManutencaoDesde && (
+                            <> desde {format(equipment.emManutencaoDesde, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</>
+                          )}.
+                        </p>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Somente o técnico responsável pode finalizar esta manutenção.
+                        </p>
+                        {isAdmin && equipment.manutencaoId && (
+                          <div className="mt-4">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => {
+                                const ongoingMaintenance = maintenanceHistory.find(
+                                  (m) => m.id === equipment.manutencaoId
+                                )
+                                if (ongoingMaintenance) {
+                                  setMaintenanceToForceFinalize(ongoingMaintenance)
+                                  setEquipmentToForceFinalize(equipment)
+                                  setShowForceFinalize(true)
+                                }
+                              }}
+                              className="gap-2"
+                            >
+                              <AlertTriangle className="h-4 w-4" />
+                              Finalizar Forçadamente (Admin)
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : currentMaintenance ? (
+                /* Técnico responsável ou manutenção atual */
+                currentMaintenance.tecnicoId === user?.id ? (
+                  <MaintenanceForm
+                    maintenance={currentMaintenance}
+                    equipment={equipment}
+                    defects={defects}
+                    operators={operators}
+                    onFinalized={handleMaintenanceFinalized}
+                  />
+                ) : (
+                  /* Manutenção de outro técnico - mostrar aviso */
+                  <Card className="border-warning/30 bg-warning/5">
+                    <CardContent className="py-6">
+                      <div className="flex items-start gap-4">
+                        <div className="rounded-full bg-warning/10 p-3">
+                          <AlertTriangle className="h-6 w-6 text-warning" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-warning">
+                            Manutenção de Outro Técnico
+                          </h3>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Esta manutenção foi iniciada por <strong>{currentMaintenance.tecnicoNome}</strong>.
+                            Você não pode editar esta manutenção.
+                          </p>
+                          {isAdmin && (
+                            <div className="mt-4">
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => {
+                                  setMaintenanceToForceFinalize(currentMaintenance)
+                                  setEquipmentToForceFinalize(equipment)
+                                  setShowForceFinalize(true)
+                                }}
+                                className="gap-2"
+                              >
+                                <AlertTriangle className="h-4 w-4" />
+                                Finalizar Forçadamente (Admin)
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
               ) : (
                 <StartMaintenanceCard
                   defects={defects}
@@ -467,6 +585,25 @@ export default function MaintenancePage() {
         operators={operators}
         onCreated={handleNewEquipmentCreated}
       />
+
+      {/* Dialog de Finalização Forçada */}
+      {maintenanceToForceFinalize && equipmentToForceFinalize && user && (
+        <ForceFinishedDialog
+          open={showForceFinalize}
+          onOpenChange={(open) => {
+            setShowForceFinalize(open)
+            if (!open) {
+              setMaintenanceToForceFinalize(null)
+              setEquipmentToForceFinalize(null)
+            }
+          }}
+          maintenance={maintenanceToForceFinalize}
+          equipment={equipmentToForceFinalize}
+          userId={user.id}
+          userName={user.nome}
+          onFinalized={handleForceFinalized}
+        />
+      )}
     </div>
   )
 }

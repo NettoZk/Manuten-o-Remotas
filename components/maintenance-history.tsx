@@ -3,7 +3,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import type { Maintenance } from "@/lib/types"
-import { History, Clock, CheckCircle } from "lucide-react"
+import { History, Clock, CheckCircle, AlertTriangle } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
@@ -68,17 +68,23 @@ export function MaintenanceHistory({ history }: MaintenanceHistoryProps) {
                     <span
                       className={cn(
                         "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-                        maintenance.status === "finalizada"
+                        maintenance.finalizadoForcadamente
+                          ? "bg-destructive/10 text-destructive"
+                          : maintenance.status === "finalizada"
                           ? "bg-success/10 text-success"
                           : "bg-warning/10 text-warning"
                       )}
                     >
-                      {maintenance.status === "finalizada" ? (
+                      {maintenance.finalizadoForcadamente ? (
+                        <AlertTriangle className="h-3 w-3" />
+                      ) : maintenance.status === "finalizada" ? (
                         <CheckCircle className="h-3 w-3" />
                       ) : (
                         <Clock className="h-3 w-3" />
                       )}
-                      {maintenance.status === "finalizada"
+                      {maintenance.finalizadoForcadamente
+                        ? "Finalização Forçada"
+                        : maintenance.status === "finalizada"
                         ? "Finalizada"
                         : "Em andamento"}
                     </span>
@@ -86,6 +92,16 @@ export function MaintenanceHistory({ history }: MaintenanceHistoryProps) {
                   <p className="text-sm text-muted-foreground">
                     Tecnico: <span className="text-foreground">{maintenance.tecnicoNome}</span>
                   </p>
+                  {maintenance.finalizadoForcadamente && (
+                    <div className="rounded bg-destructive/5 border border-destructive/20 px-2 py-1 text-xs">
+                      <span className="text-destructive font-medium">Finalizado forçadamente por {maintenance.finalizadoForcadoNome}</span>
+                      {maintenance.motivoFinalizacaoForcada && (
+                        <span className="text-muted-foreground ml-1">
+                          - Motivo: {maintenance.motivoFinalizacaoForcada}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {maintenance.defeitoEncontrado && (
                     <p className="text-sm text-muted-foreground">
                       Defeito encontrado:{" "}
