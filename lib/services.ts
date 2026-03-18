@@ -104,7 +104,7 @@ export async function createEquipment(data: Omit<Equipment, "id" | "dataCadastro
   if (!situacaoRemota) {
     // Se status = usada -> situação = triagem
     // Se status = nova -> situação = nova
-    situacaoRemota = data.status === "Usada" ? "triagem" : "nova"
+    situacaoRemota = data.status === "Usada" ? "Triagem" : "nova"
   }
 
   const docRef = await addDoc(collection(db, "equipments"), {
