@@ -31,6 +31,16 @@ export interface Equipment {
   situacaoAtualizadaPor?: string
   motivoAlteracaoSituacao?: string
   dataCadastro: Date
+  observacoes?: string
+  // Campos de log de edição
+  ultimaEdicaoEm?: Date
+  ultimaEdicaoPor?: string
+  ultimaEdicaoUserId?: string
+  // Campos de arquivamento
+  estadoRegistro?: "ativo" | "inativo"
+  arquivadoEm?: Date
+  arquivadoPor?: string
+  arquivadoUserId?: string
 }
 
 export type ChecklistStatus = "OK" | "Falha" | "Não testado"

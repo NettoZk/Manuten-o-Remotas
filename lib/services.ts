@@ -99,8 +99,18 @@ export async function createEquipment(data: Omit<Equipment, "id" | "dataCadastro
     throw new Error("Ja existe uma remota com este numero")
   }
 
+  // Aplicar regra automática de situação baseada no status
+  let situacaoRemota = data.situacaoRemota
+  if (!situacaoRemota) {
+    // Se status = usada -> situação = triagem
+    // Se status = nova -> situação = nova
+    situacaoRemota = data.status === "Usada" ? "triagem" : "nova"
+  }
+
   const docRef = await addDoc(collection(db, "equipments"), {
     ...data,
+    situacaoRemota,
+    estadoRegistro: "ativo",
     dataCadastro: Timestamp.now(),
   })
   return docRef.id
@@ -120,19 +130,28 @@ export async function getEquipmentByNumber(numeroRemota: string): Promise<Equipm
   } as Equipment
 }
 
-export async function getEquipments(): Promise<Equipment[]> {
+export async function getEquipments(includeInactive = false): Promise<Equipment[]> {
   const snapshot = await getDocs(
     query(collection(db, "equipments"), orderBy("dataCadastro", "desc"))
   )
-  return snapshot.docs.map((doc) => {
+  const equipments = snapshot.docs.map((doc) => {
     const data = doc.data()
     return {
       id: doc.id,
       ...data,
       dataCadastro: data.dataCadastro?.toDate() || new Date(),
       situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
+      ultimaEdicaoEm: data.ultimaEdicaoEm?.toDate() || undefined,
+      arquivadoEm: data.arquivadoEm?.toDate() || undefined,
+      estadoRegistro: data.estadoRegistro || "ativo",
     }
   }) as Equipment[]
+
+  // Filtrar inativos se não for para incluí-los
+  if (!includeInactive) {
+    return equipments.filter((e) => e.estadoRegistro !== "inativo")
+  }
+  return equipments
 }
 
 export async function updateEquipment(
@@ -140,6 +159,53 @@ export async function updateEquipment(
   data: Partial<Omit<Equipment, "id" | "numeroRemota" | "dataCadastro">>
 ): Promise<void> {
   await updateDoc(doc(db, "equipments", equipmentId), data)
+}
+
+export async function updateEquipmentWithLog(
+  equipmentId: string,
+  data: {
+    modelo?: string
+    status?: "Nova" | "Usada"
+    situacaoRemota?: string
+    observacoes?: string
+  },
+  userId: string,
+  userName: string
+): Promise<void> {
+  const updateData: Record<string, unknown> = { ...data }
+  
+  // Adicionar log de alteração
+  updateData.ultimaEdicaoEm = Timestamp.now()
+  updateData.ultimaEdicaoPor = userName
+  updateData.ultimaEdicaoUserId = userId
+  
+  await updateDoc(doc(db, "equipments", equipmentId), updateData)
+}
+
+export async function deleteEquipment(equipmentId: string): Promise<void> {
+  await deleteDoc(doc(db, "equipments", equipmentId))
+}
+
+export async function archiveEquipment(
+  equipmentId: string,
+  userId: string,
+  userName: string
+): Promise<void> {
+  await updateDoc(doc(db, "equipments", equipmentId), {
+    estadoRegistro: "inativo",
+    arquivadoEm: Timestamp.now(),
+    arquivadoPor: userName,
+    arquivadoUserId: userId,
+  })
+}
+
+export async function hasMaintenanceHistory(numeroRemota: string): Promise<boolean> {
+  const q = query(
+    collection(db, "maintenances"),
+    where("numeroRemota", "==", numeroRemota)
+  )
+  const snapshot = await getDocs(q)
+  return !snapshot.empty
 }
 
 export async function updateEquipmentSituationManual(
