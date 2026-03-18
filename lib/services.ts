@@ -240,7 +240,8 @@ function removeUndefinedFields<T extends Record<string, unknown>>(obj: T): Parti
 }
 
 export async function createMaintenance(
-  data: Omit<Maintenance, "id" | "dataEntrada" | "dataFinalizacao" | "status">
+  data: Omit<Maintenance, "id" | "dataEntrada" | "dataFinalizacao" | "status">,
+  situacaoAtual?: string
 ): Promise<string> {
   const cleanedData = removeUndefinedFields(data)
   const docRef = await addDoc(collection(db, "maintenances"), {
@@ -251,8 +252,9 @@ export async function createMaintenance(
   })
 
   // Atualizar situação da remota para "Manutenção" e bloquear para o técnico
-  await updateDoc(doc(db, "equipments", data.equipmentId), {
-    situacaoAnterior: undefined, // será preenchido pela busca anterior se necessário
+  // Usar removeUndefinedFields para garantir que não enviamos undefined ao Firebase
+  const equipmentUpdate = removeUndefinedFields({
+    situacaoAnterior: situacaoAtual || null,
     situacaoRemota: "Manutenção",
     situacaoAtualizadaEm: Timestamp.now(),
     situacaoAtualizadaPor: data.tecnicoNome,
@@ -262,6 +264,8 @@ export async function createMaintenance(
     emManutencaoDesde: Timestamp.now(),
     manutencaoId: docRef.id,
   })
+  
+  await updateDoc(doc(db, "equipments", data.equipmentId), equipmentUpdate)
 
   return docRef.id
 }

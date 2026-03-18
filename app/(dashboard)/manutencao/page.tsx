@@ -236,7 +236,7 @@ export default function MaintenancePage() {
           comunicacaoIRIS: "Não testado",
         },
         observacoes: "",
-      })
+      }, equipment.situacaoRemota) // Passar situação atual para salvar como anterior
 
       // Criar objeto de manutenção localmente para evitar nova busca
       const newMaintenance: Maintenance = {
@@ -268,6 +268,33 @@ export default function MaintenancePage() {
       setCurrentMaintenance(newMaintenance)
       setMaintenanceHistory((prev) => [newMaintenance, ...prev])
       setMaintenancesInProgress((prev) => [newMaintenance, ...prev])
+      
+      // Atualizar o equipamento localmente para refletir a mudança de situação
+      setEquipment({
+        ...equipment,
+        situacaoAnterior: equipment.situacaoRemota,
+        situacaoRemota: "Manutenção",
+        emManutencaoPor: user.id,
+        emManutencaoNome: user.nome,
+        emManutencaoDesde: new Date(),
+        manutencaoId: maintenanceId,
+      })
+      
+      // Atualizar lista de equipamentos para refletir a situação na tela de equipamentos
+      setEquipmentsList((prev) =>
+        prev.map((e) =>
+          e.id === equipment.id
+            ? {
+                ...e,
+                situacaoRemota: "Manutenção",
+                emManutencaoPor: user.id,
+                emManutencaoNome: user.nome,
+                emManutencaoDesde: new Date(),
+                manutencaoId: maintenanceId,
+              }
+            : e
+        )
+      )
       
       toast.success("Manutenção iniciada com sucesso!")
     } catch (error) {
