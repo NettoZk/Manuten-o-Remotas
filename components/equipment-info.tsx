@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import type { Equipment } from "@/lib/types"
-import { Radio, Calendar, Layers, Signal } from "lucide-react"
+import { Radio, Calendar, Layers, Signal, Lock, Wrench } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
@@ -22,12 +22,20 @@ export function EquipmentInfo({ equipment }: EquipmentInfoProps) {
             </div>
             <span className="text-lg">Remota {equipment.numeroRemota}</span>
           </div>
-          <Badge 
-            variant={equipment.status === "Nova" ? "default" : "secondary"}
-            className={equipment.status === "Nova" ? "bg-success/10 text-success" : "bg-secondary text-muted-foreground"}
-          >
-            {equipment.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {equipment.emManutencaoPor && (
+              <Badge className="gap-1 bg-warning/10 text-warning border-warning/20">
+                <Lock className="h-3 w-3" />
+                Em Manutenção
+              </Badge>
+            )}
+            <Badge 
+              variant={equipment.status === "Nova" ? "default" : "secondary"}
+              className={equipment.status === "Nova" ? "bg-success/10 text-success" : "bg-secondary text-muted-foreground"}
+            >
+              {equipment.status}
+            </Badge>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-6">
@@ -58,7 +66,38 @@ export function EquipmentInfo({ equipment }: EquipmentInfoProps) {
             </p>
           </div>
         </div>
-        <div className="mt-6 flex items-center gap-2 rounded-lg bg-secondary/50 px-4 py-2 text-xs text-muted-foreground">
+        {/* Situação da Remota */}
+        {equipment.situacaoRemota && (
+          <div className="mt-6 flex items-center gap-3 rounded-lg bg-primary/5 border border-primary/20 px-4 py-3">
+            <Wrench className="h-4 w-4 text-primary" />
+            <div>
+              <span className="text-sm font-medium text-foreground">Situação: {equipment.situacaoRemota}</span>
+              {equipment.situacaoAtualizadaPor && (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  (atualizada por {equipment.situacaoAtualizadaPor})
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Info de quem está em manutenção */}
+        {equipment.emManutencaoPor && (
+          <div className="mt-3 flex items-center gap-3 rounded-lg bg-warning/5 border border-warning/20 px-4 py-3">
+            <Lock className="h-4 w-4 text-warning" />
+            <div className="text-sm">
+              <span className="font-medium text-warning">Bloqueada para manutenção</span>
+              <span className="text-muted-foreground">
+                {" "}por <strong className="text-foreground">{equipment.emManutencaoNome}</strong>
+                {equipment.emManutencaoDesde && (
+                  <> desde {format(equipment.emManutencaoDesde, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}</>
+                )}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-secondary/50 px-4 py-2 text-xs text-muted-foreground">
           <Calendar className="h-3 w-3" />
           Cadastrada em{" "}
           {format(equipment.dataCadastro, "dd/MM/yyyy 'as' HH:mm", {

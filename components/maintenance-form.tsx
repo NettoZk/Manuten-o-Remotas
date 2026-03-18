@@ -96,7 +96,7 @@ export function MaintenanceForm({
 
     setIsLoading(true)
     try {
-      await finalizeMaintenance(maintenance.id, {
+      await finalizeMaintenance(maintenance.id, equipment.id, {
         defeitoEncontrado,
         defeitoEncontradoOutro: defeitoEncontradoOutro || undefined,
         servicosRealizados,

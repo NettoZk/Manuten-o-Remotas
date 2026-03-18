@@ -62,7 +62,7 @@ export function NewEquipmentDialog({
       })
 
       // Definir situação automática para feedback local
-      const situacaoRemota = status === "Usada" ? "triagem" : "nova"
+      const situacaoRemota = status === "Usada" ? "Triagem" : "Nova"
 
       onCreated({
         id,

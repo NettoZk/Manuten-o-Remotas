@@ -66,9 +66,15 @@ export function ImportEquipmentDialog({
   const normalizeSituacao = (value: string, status: EquipmentStatus): string => {
     // Se não houver valor, aplicar regra automática
     if (!value || value.trim() === "") {
-      return status === "Nova" ? "nova" : "triagem"
+      return status === "Nova" ? "Nova" : "Triagem"
     }
-    return value.trim().toLowerCase()
+    // Normalizar valores conhecidos para formato com primeira letra maiúscula
+    const normalized = value.trim().toLowerCase()
+    if (normalized === "nova" || normalized === "new") return "Nova"
+    if (normalized === "triagem" || normalized === "triage") return "Triagem"
+    if (normalized === "manutencao" || normalized === "manutenção" || normalized === "maintenance") return "Manutenção"
+    // Retorna o valor original com primeira letra maiúscula para situações customizadas
+    return value.trim().charAt(0).toUpperCase() + value.trim().slice(1).toLowerCase()
   }
 
   const validateRow = async (row: Record<string, unknown>, rowIndex: number): Promise<ValidationResult> => {

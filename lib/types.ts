@@ -41,6 +41,11 @@ export interface Equipment {
   arquivadoEm?: Date
   arquivadoPor?: string
   arquivadoUserId?: string
+  // Campos de bloqueio de manutenção
+  emManutencaoPor?: string       // ID do técnico responsável
+  emManutencaoNome?: string      // Nome do técnico responsável
+  emManutencaoDesde?: Date       // Data/hora que iniciou
+  manutencaoId?: string          // ID da manutenção atual
 }
 
 export type ChecklistStatus = "OK" | "Falha" | "Não testado"
@@ -73,6 +78,11 @@ export interface Maintenance {
   checklist: ChecklistItem
   observacoes: string
   status: "em_andamento" | "finalizada"
+  // Campos para finalização forçada
+  finalizadoForcadamente?: boolean
+  finalizadoForcadoPor?: string
+  finalizadoForcadoNome?: string
+  motivoFinalizacaoForcada?: string
 }
 
 export interface Defect {

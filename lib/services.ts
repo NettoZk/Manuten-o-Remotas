@@ -102,9 +102,9 @@ export async function createEquipment(data: Omit<Equipment, "id" | "dataCadastro
   // Aplicar regra automática de situação baseada no status
   let situacaoRemota = data.situacaoRemota
   if (!situacaoRemota) {
-    // Se status = usada -> situação = triagem
-    // Se status = nova -> situação = nova
-    situacaoRemota = data.status === "Usada" ? "Triagem" : "nova"
+    // Se status = usada -> situação = Triagem
+    // Se status = nova -> situação = Nova
+    situacaoRemota = data.status === "Usada" ? "Triagem" : "Nova"
   }
 
   const docRef = await addDoc(collection(db, "equipments"), {
@@ -122,11 +122,14 @@ export async function getEquipmentByNumber(numeroRemota: string): Promise<Equipm
   
   if (snapshot.empty) return null
   
-  const doc = snapshot.docs[0]
+  const docSnap = snapshot.docs[0]
+  const data = docSnap.data()
   return {
-    id: doc.id,
-    ...doc.data(),
-    dataCadastro: doc.data().dataCadastro?.toDate() || new Date(),
+    id: docSnap.id,
+    ...data,
+    dataCadastro: data.dataCadastro?.toDate() || new Date(),
+    situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
+    emManutencaoDesde: data.emManutencaoDesde?.toDate() || undefined,
   } as Equipment
 }
 
@@ -143,6 +146,7 @@ export async function getEquipments(includeInactive = false): Promise<Equipment[
       situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
       ultimaEdicaoEm: data.ultimaEdicaoEm?.toDate() || undefined,
       arquivadoEm: data.arquivadoEm?.toDate() || undefined,
+      emManutencaoDesde: data.emManutencaoDesde?.toDate() || undefined,
       estadoRegistro: data.estadoRegistro || "ativo",
     }
   }) as Equipment[]
@@ -236,7 +240,8 @@ function removeUndefinedFields<T extends Record<string, unknown>>(obj: T): Parti
 }
 
 export async function createMaintenance(
-  data: Omit<Maintenance, "id" | "dataEntrada" | "dataFinalizacao" | "status">
+  data: Omit<Maintenance, "id" | "dataEntrada" | "dataFinalizacao" | "status">,
+  situacaoAtual?: string
 ): Promise<string> {
   const cleanedData = removeUndefinedFields(data)
   const docRef = await addDoc(collection(db, "maintenances"), {
@@ -245,11 +250,29 @@ export async function createMaintenance(
     dataFinalizacao: null,
     status: "em_andamento",
   })
+
+  // Atualizar situação da remota para "Manutenção" e bloquear para o técnico
+  // Usar removeUndefinedFields para garantir que não enviamos undefined ao Firebase
+  const equipmentUpdate = removeUndefinedFields({
+    situacaoAnterior: situacaoAtual || null,
+    situacaoRemota: "Manutenção",
+    situacaoAtualizadaEm: Timestamp.now(),
+    situacaoAtualizadaPor: data.tecnicoNome,
+    // Campos de bloqueio
+    emManutencaoPor: data.tecnicoId,
+    emManutencaoNome: data.tecnicoNome,
+    emManutencaoDesde: Timestamp.now(),
+    manutencaoId: docRef.id,
+  })
+  
+  await updateDoc(doc(db, "equipments", data.equipmentId), equipmentUpdate)
+
   return docRef.id
 }
 
 export async function finalizeMaintenance(
   maintenanceId: string,
+  equipmentId: string,
   data: {
     defeitoEncontrado: string
     defeitoEncontradoOutro?: string
@@ -266,6 +289,44 @@ export async function finalizeMaintenance(
     ...cleanedData,
     dataFinalizacao: Timestamp.now(),
     status: "finalizada",
+  })
+
+  // Desbloquear a remota após finalização
+  await updateDoc(doc(db, "equipments", equipmentId), {
+    emManutencaoPor: null,
+    emManutencaoNome: null,
+    emManutencaoDesde: null,
+    manutencaoId: null,
+  })
+}
+
+export async function forceFinalizeMaintenance(
+  maintenanceId: string,
+  equipmentId: string,
+  userId: string,
+  userName: string,
+  motivo: string
+): Promise<void> {
+  // Atualizar a manutenção como finalizada forçadamente
+  await updateDoc(doc(db, "maintenances", maintenanceId), {
+    dataFinalizacao: Timestamp.now(),
+    status: "finalizada",
+    finalizadoForcadamente: true,
+    finalizadoForcadoPor: userId,
+    finalizadoForcadoNome: userName,
+    motivoFinalizacaoForcada: motivo,
+  })
+
+  // Desbloquear a remota
+  await updateDoc(doc(db, "equipments", equipmentId), {
+    situacaoRemota: "Triagem", // Volta para triagem após finalização forçada
+    emManutencaoPor: null,
+    emManutencaoNome: null,
+    emManutencaoDesde: null,
+    manutencaoId: null,
+    situacaoAtualizadaEm: Timestamp.now(),
+    situacaoAtualizadaPor: userName,
+    motivoAlteracaoSituacao: `Manutenção finalizada forçadamente: ${motivo}`,
   })
 }
 
