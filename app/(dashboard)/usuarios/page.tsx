@@ -65,7 +65,16 @@ export default function UsersPage() {
     const unsubscribe = onSnapshot(
       usersQuery,
       (snapshot) => {
-        setUsers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as User)))
+        setUsers(
+          snapshot.docs.map((doc) => {
+            const data = doc.data()
+            return {
+              id: doc.id,
+              ...data,
+              criadoEm: data.criadoEm?.toDate?.() || new Date(),
+            } as User
+          })
+        )
         setLoading(false)
       },
       (error) => {
