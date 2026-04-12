@@ -27,6 +27,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
+import { collection, onSnapshot, query } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import { getUsers, createUser, updateUser, deleteUser, updateUserPassword } from "@/lib/services"
 import type { User, UserRole } from "@/lib/types"
 import { Users, Plus, Pencil, Trash2, Key } from "lucide-react"
@@ -59,7 +61,20 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    loadUsers()
+    const usersQuery = query(collection(db, "users"))
+    const unsubscribe = onSnapshot(
+      usersQuery,
+      (snapshot) => {
+        setUsers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as User)))
+        setLoading(false)
+      },
+      (error) => {
+        console.error("Erro ao carregar usuários em tempo real:", error)
+        setLoading(false)
+      }
+    )
+
+    return () => unsubscribe()
   }, [])
 
   const handleUserCreated = () => {

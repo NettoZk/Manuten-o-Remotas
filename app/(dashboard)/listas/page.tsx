@@ -46,6 +46,8 @@ import {
   updateEquipmentSituation,
   deleteEquipmentSituation,
 } from "@/lib/services"
+import { collection, onSnapshot, query } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import type { Defect, Service, Operator, EquipmentSituation } from "@/lib/types"
 import { Settings, Plus, Pencil, Trash2, AlertTriangle, Wrench, Signal, MapPin } from "lucide-react"
 
@@ -306,7 +308,73 @@ export default function ListsPage() {
   }
 
   useEffect(() => {
-    loadData()
+    let readyCount = 0
+    const markReady = () => {
+      readyCount += 1
+      if (readyCount === 4) {
+        setLoading(false)
+      }
+    }
+
+    const defectsQuery = query(collection(db, "defects"))
+    const servicesQuery = query(collection(db, "services"))
+    const operatorsQuery = query(collection(db, "operators"))
+    const situationsQuery = query(collection(db, "equipment_status"))
+
+    const unsubscribeDefects = onSnapshot(
+      defectsQuery,
+      (snapshot) => {
+        setDefects(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Defect)))
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar defeitos em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeServices = onSnapshot(
+      servicesQuery,
+      (snapshot) => {
+        setServices(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Service)))
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar serviços em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeOperators = onSnapshot(
+      operatorsQuery,
+      (snapshot) => {
+        setOperators(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Operator)))
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar operadoras em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeSituations = onSnapshot(
+      situationsQuery,
+      (snapshot) => {
+        setSituations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as EquipmentSituation)))
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar situações em tempo real:", error)
+        markReady()
+      }
+    )
+
+    return () => {
+      unsubscribeDefects()
+      unsubscribeServices()
+      unsubscribeOperators()
+      unsubscribeSituations()
+    }
   }, [])
 
   if (loading) {

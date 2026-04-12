@@ -1,13 +1,14 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "@/components/ui/chart"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer } from "recharts"
-import { getDashboardStats } from "@/lib/services"
-import type { Maintenance } from "@/lib/types"
+import { collection, onSnapshot, orderBy, query } from "firebase/firestore"
+import { db } from "@/lib/firebase"
+import type { Equipment, Maintenance } from "@/lib/types"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { Radio, Wrench, CheckCircle, Clock, TrendingUp, Activity, RefreshCw, PieChartIcon, BarChart3, Users } from "lucide-react"
@@ -38,52 +39,162 @@ const COLORS = [
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [equipments, setEquipments] = useState<Equipment[]>([])
+  const [maintenances, setMaintenances] = useState<Maintenance[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
-  const loadStats = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) {
-      setRefreshing(true)
+  const computeStats = (equipmentsData: Equipment[], maintenancesData: Maintenance[]) => {
+    const totalEquipments = equipmentsData.length
+    const totalMaintenances = maintenancesData.length
+    const inProgress = maintenancesData.filter((m) => m.status === "em_andamento").length
+
+    const now = new Date()
+    const completedThisMonth = maintenancesData.filter((m) => {
+      if (!m.dataFinalizacao) return false
+      return (
+        m.dataFinalizacao.getMonth() === now.getMonth() &&
+        m.dataFinalizacao.getFullYear() === now.getFullYear()
+      )
+    }).length
+
+    const situacaoCount: Record<string, number> = {}
+    equipmentsData.forEach((eq) => {
+      const situacao = eq.situacaoRemota || "Não definida"
+      situacaoCount[situacao] = (situacaoCount[situacao] || 0) + 1
+    })
+    const remotasPorSituacao = Object.entries(situacaoCount).map(([name, value]) => ({ name, value }))
+
+    const tecnicoCount: Record<string, number> = {}
+    maintenancesData.forEach((m) => {
+      const tecnico = m.tecnicoNome || "Desconhecido"
+      tecnicoCount[tecnico] = (tecnicoCount[tecnico] || 0) + 1
+    })
+    const manutencoesPorTecnico = Object.entries(tecnicoCount)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10)
+
+    const monthsData: Record<string, number> = {}
+    for (let i = 5; i >= 0; i--) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+      monthsData[key] = 0
     }
-    try {
-      const data = await getDashboardStats()
-      setStats(data)
-      setLastUpdate(new Date())
-    } catch (error) {
-      console.error("Erro ao carregar estatisticas:", error)
-      // Definir valores padrão em caso de erro
-      if (!stats) {
-        setStats({
-          totalEquipments: 0,
-          totalMaintenances: 0,
-          inProgress: 0,
-          completedThisMonth: 0,
-          recentMaintenances: [],
-          remotasPorSituacao: [],
-          manutencoesPorTecnico: [],
-          manutencoesPorMes: [],
-        })
+    maintenancesData.forEach((m) => {
+      if (m.dataFinalizacao) {
+        const date = new Date(m.dataFinalizacao)
+        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+        if (monthsData[key] !== undefined) {
+          monthsData[key]++
+        }
       }
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
+    })
+
+    const mesesNomes = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    const manutencoesPorMes = Object.entries(monthsData).map(([key, total]) => {
+      const [year, month] = key.split("-")
+      return {
+        mes: `${mesesNomes[parseInt(month) - 1]}/${year.slice(2)}`,
+        total,
+      }
+    })
+
+    const recentMaintenances = [...maintenancesData]
+      .sort((a, b) => (b.dataEntrada?.getTime() || 0) - (a.dataEntrada?.getTime() || 0))
+      .slice(0, 5)
+
+    return {
+      totalEquipments,
+      totalMaintenances,
+      inProgress,
+      completedThisMonth,
+      recentMaintenances,
+      remotasPorSituacao,
+      manutencoesPorTecnico,
+      manutencoesPorMes,
     }
-  }, [stats])
+  }
 
   useEffect(() => {
-    loadStats()
-    
-    // Auto-refresh a cada 30 segundos
-    const interval = setInterval(() => {
-      loadStats()
-    }, 30000)
+    let readyCount = 0
+    const markReady = () => {
+      readyCount += 1
+      if (readyCount === 2) {
+        setLoading(false)
+      }
+    }
 
-    return () => clearInterval(interval)
-  }, [loadStats])
+    const equipmentsQuery = query(collection(db, "equipments"), orderBy("dataCadastro", "desc"))
+    const maintenancesQuery = query(collection(db, "maintenances"))
+
+    const unsubscribeEquipments = onSnapshot(
+      equipmentsQuery,
+      (snapshot) => {
+        const equipmentsData = snapshot.docs.map((doc) => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            ...data,
+            dataCadastro: data.dataCadastro?.toDate() || new Date(),
+            situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
+            ultimaEdicaoEm: data.ultimaEdicaoEm?.toDate() || undefined,
+            arquivadoEm: data.arquivadoEm?.toDate() || undefined,
+            emManutencaoDesde: data.emManutencaoDesde?.toDate() || undefined,
+            estadoRegistro: data.estadoRegistro || "ativo",
+          } as Equipment
+        })
+
+        setEquipments(equipmentsData)
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar equipamentos do dashboard em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeMaintenances = onSnapshot(
+      maintenancesQuery,
+      (snapshot) => {
+        const maintenancesData = snapshot.docs.map((doc) => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            ...data,
+            dataEntrada: data.dataEntrada?.toDate() || new Date(),
+            dataFinalizacao: data.dataFinalizacao?.toDate() || null,
+          } as Maintenance
+        })
+
+        setMaintenances(maintenancesData)
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar manutenções do dashboard em tempo real:", error)
+        markReady()
+      }
+    )
+
+    return () => {
+      unsubscribeEquipments()
+      unsubscribeMaintenances()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (equipments.length || maintenances.length || !loading) {
+      setStats(computeStats(equipments, maintenances))
+      setLastUpdate(new Date())
+    }
+  }, [equipments, maintenances, loading])
 
   const handleRefresh = () => {
-    loadStats(true)
+    setRefreshing(true)
+    setStats(computeStats(equipments, maintenances))
+    setLastUpdate(new Date())
+    setRefreshing(false)
   }
 
   if (loading) {

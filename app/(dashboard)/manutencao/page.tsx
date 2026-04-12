@@ -12,15 +12,15 @@ import { toast } from "sonner"
 import { Search, Plus, Clock, Radio, Eye, ArrowRight, Lock, AlertTriangle } from "lucide-react"
 import {
   getEquipmentByNumber,
+  getEquipments,
   getMaintenancesByEquipment,
   createMaintenance,
-  getDefects,
-  getOperators,
   getMaintenancesInProgress,
-  getEquipments,
   forceFinalizeMaintenance,
 } from "@/lib/services"
 import type { Equipment, Maintenance, Defect, Operator, ChecklistItem } from "@/lib/types"
+import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import { NewEquipmentDialog } from "@/components/new-equipment-dialog"
 import { MaintenanceForm } from "@/components/maintenance-form"
 import { EquipmentInfo } from "@/components/equipment-info"
@@ -54,46 +54,104 @@ export default function MaintenancePage() {
   const isAdmin = user?.tipo === "admin"
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        // Carregar dados em paralelo com tratamento individual de erros
-        const [defectsResult, operatorsResult, inProgressResult, equipmentsResult] = await Promise.allSettled([
-          getDefects(),
-          getOperators(),
-          getMaintenancesInProgress(),
-          getEquipments(),
-        ])
-
-        if (defectsResult.status === "fulfilled") {
-          setDefects(defectsResult.value.filter((d) => d.ativo))
-        } else {
-          console.error("Erro ao carregar defeitos:", defectsResult.reason)
-        }
-
-        if (operatorsResult.status === "fulfilled") {
-          setOperators(operatorsResult.value.filter((o) => o.ativo))
-        } else {
-          console.error("Erro ao carregar operadoras:", operatorsResult.reason)
-        }
-
-        if (inProgressResult.status === "fulfilled") {
-          setMaintenancesInProgress(inProgressResult.value)
-        } else {
-          console.error("Erro ao carregar manutenções em andamento:", inProgressResult.reason)
-        }
-
-        if (equipmentsResult.status === "fulfilled") {
-          setEquipmentsList(equipmentsResult.value)
-        } else {
-          console.error("Erro ao carregar equipamentos:", equipmentsResult.reason)
-        }
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error)
-      } finally {
+    let readyCount = 0
+    const markReady = () => {
+      readyCount += 1
+      if (readyCount === 4) {
         setLoadingInProgress(false)
       }
     }
-    loadData()
+
+    const defectsQuery = query(collection(db, "defects"))
+    const operatorsQuery = query(collection(db, "operators"))
+    const inProgressQuery = query(
+      collection(db, "maintenances"),
+      where("status", "==", "em_andamento")
+    )
+    const equipmentsQuery = query(collection(db, "equipments"), orderBy("dataCadastro", "desc"))
+
+    const unsubscribeDefects = onSnapshot(
+      defectsQuery,
+      (snapshot) => {
+        setDefects(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Defect)).filter((d) => d.ativo))
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar defeitos em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeOperators = onSnapshot(
+      operatorsQuery,
+      (snapshot) => {
+        setOperators(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Operator)).filter((o) => o.ativo))
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar operadoras em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeInProgress = onSnapshot(
+      inProgressQuery,
+      (snapshot) => {
+        setMaintenancesInProgress(
+          snapshot.docs
+            .map((doc) => {
+              const data = doc.data()
+              return {
+                id: doc.id,
+                ...data,
+                dataEntrada: data.dataEntrada?.toDate() || new Date(),
+                dataFinalizacao: data.dataFinalizacao?.toDate() || null,
+              } as Maintenance
+            })
+            .sort((a, b) => b.dataEntrada.getTime() - a.dataEntrada.getTime())
+        )
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar manutenções em andamento em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeEquipments = onSnapshot(
+      equipmentsQuery,
+      (snapshot) => {
+        setEquipmentsList(
+          snapshot.docs
+            .map((doc) => {
+              const data = doc.data()
+              return {
+                id: doc.id,
+                ...data,
+                dataCadastro: data.dataCadastro?.toDate() || new Date(),
+                situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
+                ultimaEdicaoEm: data.ultimaEdicaoEm?.toDate() || undefined,
+                arquivadoEm: data.arquivadoEm?.toDate() || undefined,
+                emManutencaoDesde: data.emManutencaoDesde?.toDate() || undefined,
+                estadoRegistro: data.estadoRegistro || "ativo",
+              } as Equipment
+            })
+            .filter((equipment) => equipment.estadoRegistro !== "inativo")
+        )
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar equipamentos em tempo real:", error)
+        markReady()
+      }
+    )
+
+    return () => {
+      unsubscribeDefects()
+      unsubscribeOperators()
+      unsubscribeInProgress()
+      unsubscribeEquipments()
+    }
   }, [])
 
   const refreshMaintenancesInProgress = async () => {

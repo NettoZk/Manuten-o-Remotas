@@ -9,9 +9,10 @@ import { Badge } from "@/components/ui/badge"
 import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
-import { getAllMaintenances, getEquipments, getOperators, getUsers } from "@/lib/services"
 import { exportMaintenancesToExcel } from "@/lib/excel-export"
 import type { Maintenance, Equipment, Operator, User } from "@/lib/types"
+import { collection, onSnapshot, query } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import { History, Search, Download, Filter, X } from "lucide-react"
 import { format, isWithinInterval, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -36,31 +37,104 @@ export default function HistoryPage() {
   const [filterDateTo, setFilterDateTo] = useState("")
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        const [maintenancesData, equipmentsData, operatorsData, usersData] = await Promise.all([
-          getAllMaintenances(),
-          getEquipments(),
-          getOperators(),
-          getUsers(),
-        ])
-
-        setMaintenances(maintenancesData)
-        setFilteredMaintenances(maintenancesData)
-
-        const equipmentMap = new Map<string, Equipment>()
-        equipmentsData.forEach((e) => equipmentMap.set(e.numeroRemota, e))
-        setEquipments(equipmentMap)
-
-        setOperators(operatorsData.filter((o) => o.ativo))
-        setTechnicians(usersData.filter((u) => u.tipo === "tecnico" || u.tipo === "admin"))
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error)
-      } finally {
+    let readyCount = 0
+    const markReady = () => {
+      readyCount += 1
+      if (readyCount === 4) {
         setLoading(false)
       }
     }
-    loadData()
+
+    const maintenancesQuery = query(collection(db, "maintenances"))
+    const equipmentsQuery = query(collection(db, "equipments"))
+    const operatorsQuery = query(collection(db, "operators"))
+    const usersQuery = query(collection(db, "users"))
+
+    const unsubscribeMaintenances = onSnapshot(
+      maintenancesQuery,
+      (snapshot) => {
+        const maintenancesData = snapshot.docs
+          .map((doc) => {
+            const data = doc.data()
+            return {
+              id: doc.id,
+              ...data,
+              dataEntrada: data.dataEntrada?.toDate() || new Date(),
+              dataFinalizacao: data.dataFinalizacao?.toDate() || null,
+            } as Maintenance
+          })
+          .sort((a, b) => b.dataEntrada.getTime() - a.dataEntrada.getTime())
+
+        setMaintenances(maintenancesData)
+        setFilteredMaintenances(maintenancesData)
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar histórico em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeEquipments = onSnapshot(
+      equipmentsQuery,
+      (snapshot) => {
+        const equipmentMap = new Map<string, Equipment>()
+        snapshot.docs.forEach((doc) => {
+          const data = doc.data()
+          equipmentMap.set(doc.id, {
+            id: doc.id,
+            ...data,
+            dataCadastro: data.dataCadastro?.toDate() || new Date(),
+            situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
+            ultimaEdicaoEm: data.ultimaEdicaoEm?.toDate() || undefined,
+            arquivadoEm: data.arquivadoEm?.toDate() || undefined,
+            emManutencaoDesde: data.emManutencaoDesde?.toDate() || undefined,
+            estadoRegistro: data.estadoRegistro || "ativo",
+          } as Equipment)
+        })
+        setEquipments(equipmentMap)
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar equipamentos em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeOperators = onSnapshot(
+      operatorsQuery,
+      (snapshot) => {
+        setOperators(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Operator)).filter((o) => o.ativo))
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar operadoras em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const unsubscribeUsers = onSnapshot(
+      usersQuery,
+      (snapshot) => {
+        setTechnicians(
+          snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() } as User))
+            .filter((u) => u.tipo === "tecnico" || u.tipo === "admin")
+        )
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar usuários em tempo real:", error)
+        markReady()
+      }
+    )
+
+    return () => {
+      unsubscribeMaintenances()
+      unsubscribeEquipments()
+      unsubscribeOperators()
+      unsubscribeUsers()
+    }
   }, [])
 
   useEffect(() => {

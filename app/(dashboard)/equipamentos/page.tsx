@@ -16,8 +16,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { getEquipments, getMaintenancesByEquipment, getEquipmentSituations, updateEquipmentSituationManual } from "@/lib/services"
+import { getEquipments, getMaintenancesByEquipment, updateEquipmentSituationManual } from "@/lib/services"
 import type { Equipment, Maintenance, EquipmentSituation } from "@/lib/types"
+import { collection, onSnapshot, orderBy, query } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import { useAuth } from "@/contexts/auth-context"
 import { EditEquipmentDialog } from "@/components/edit-equipment-dialog"
 import { DeleteEquipmentDialog } from "@/components/delete-equipment-dialog"
@@ -61,22 +63,65 @@ export default function EquipmentsPage() {
   const [showImportDialog, setShowImportDialog] = useState(false)
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        const [equipmentsData, situationsData] = await Promise.all([
-          getEquipments(),
-          getEquipmentSituations()
-        ])
-        setEquipments(equipmentsData)
-        setFilteredEquipments(equipmentsData)
-        setEquipmentSituations(situationsData.filter((s) => s.ativo))
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error)
-      } finally {
+    let readyCount = 0
+    const markReady = () => {
+      readyCount += 1
+      if (readyCount === 2) {
         setLoading(false)
       }
     }
-    loadData()
+
+    const equipmentsQuery = query(collection(db, "equipments"), orderBy("dataCadastro", "desc"))
+    const unsubscribeEquipments = onSnapshot(
+      equipmentsQuery,
+      (snapshot) => {
+        const equipmentsData = snapshot.docs
+          .map((doc) => {
+            const data = doc.data()
+            return {
+              id: doc.id,
+              ...data,
+              dataCadastro: data.dataCadastro?.toDate() || new Date(),
+              situacaoAtualizadaEm: data.situacaoAtualizadaEm?.toDate() || undefined,
+              ultimaEdicaoEm: data.ultimaEdicaoEm?.toDate() || undefined,
+              arquivadoEm: data.arquivadoEm?.toDate() || undefined,
+              emManutencaoDesde: data.emManutencaoDesde?.toDate() || undefined,
+              estadoRegistro: data.estadoRegistro || "ativo",
+            } as Equipment
+          })
+          .filter((e) => e.estadoRegistro !== "inativo")
+
+        setEquipments(equipmentsData)
+        setFilteredEquipments(equipmentsData)
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar equipamentos em tempo real:", error)
+        markReady()
+      }
+    )
+
+    const situationsQuery = query(collection(db, "equipment_status"))
+    const unsubscribeSituations = onSnapshot(
+      situationsQuery,
+      (snapshot) => {
+        setEquipmentSituations(
+          snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() } as EquipmentSituation))
+            .filter((s) => s.ativo)
+        )
+        markReady()
+      },
+      (error) => {
+        console.error("Erro ao carregar situações em tempo real:", error)
+        markReady()
+      }
+    )
+
+    return () => {
+      unsubscribeEquipments()
+      unsubscribeSituations()
+    }
   }, [])
 
   useEffect(() => {
