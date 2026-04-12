@@ -52,7 +52,7 @@ export function EquipmentInfo({ equipment }: EquipmentInfoProps) {
             </p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wider text-muted-foreground">Lote</p>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">OCM</p>
             <p className="flex items-center gap-2 font-medium text-foreground">
               <Layers className="h-4 w-4 text-primary" />
               {equipment.lote}
