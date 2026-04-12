@@ -58,9 +58,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ username, password }),
     })
 
-    const data = await response.json()
+    let data: any
+    try {
+      data = await response.json()
+    } catch (error) {
+      const text = await response.text()
+      throw new Error(
+        `Erro ao fazer login: resposta inválida do servidor (${response.status}) - ${text}`
+      )
+    }
+
     if (!response.ok) {
-      throw new Error(data?.error || "Erro ao fazer login")
+      throw new Error(data?.error || `Erro ao fazer login (${response.status})`)
     }
 
     setUser(parseUser(data.user))
