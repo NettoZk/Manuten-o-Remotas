@@ -18,7 +18,7 @@ export function exportMaintenancesToExcel(
       "Número da Remota": m.numeroRemota,
       Modelo: equipment?.modelo || "-",
       "Ano de Fabricação": equipment?.anoFabricacao || "-",
-      Lote: equipment?.lote || "-",
+      OCM: equipment?.lote || "-",
       "Situação da Remota": equipment?.situacaoRemota || "-",
       "Operadora Antes": m.operadoraAntes,
       "Operadora Depois": m.operadoraDepois,

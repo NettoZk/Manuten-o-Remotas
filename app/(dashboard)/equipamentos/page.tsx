@@ -279,7 +279,7 @@ export default function EquipmentsPage() {
                     <th className="pb-3 font-medium">Número</th>
                     <th className="pb-3 font-medium">Modelo</th>
                     <th className="pb-3 font-medium">Ano</th>
-                    <th className="pb-3 font-medium">Lote</th>
+                    <th className="pb-3 font-medium">OCM</th>
                     <th className="pb-3 font-medium">Operadora</th>
                     <th className="pb-3 font-medium">Status</th>
                     <th className="pb-3 font-medium">Situação</th>
@@ -401,7 +401,7 @@ export default function EquipmentsPage() {
                       </p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs uppercase tracking-wider text-muted-foreground">Lote</p>
+                      <p className="text-xs uppercase tracking-wider text-muted-foreground">OCM</p>
                       <p className="flex items-center gap-2 font-medium">
                         <Layers className="h-4 w-4 text-primary" />
                         {selectedEquipment.lote}

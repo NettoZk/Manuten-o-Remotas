@@ -1,10 +1,7 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState } from "react"
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore"
-import { db } from "@/lib/firebase"
 import type { User, UserRole } from "@/lib/types"
-import bcrypt from "bcryptjs"
 
 interface AuthContextType {
   user: User | null
@@ -16,102 +13,61 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-const AUTH_STORAGE_KEY = "manutencao_auth_user"
+function parseUser(user: any): User {
+  return {
+    id: user.id,
+    nome: user.nome,
+    username: user.username,
+    tipo: user.tipo,
+    ativo: user.ativo,
+    criadoEm: new Date(user.criadoEm),
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Restaurar sessao do localStorage
   useEffect(() => {
-    const stored = localStorage.getItem(AUTH_STORAGE_KEY)
-    if (stored) {
+    async function restoreSession() {
       try {
-        const userData = JSON.parse(stored)
-        // Verificar se o usuario ainda existe e esta ativo
-        verifyUser(userData.id).then((isValid) => {
-          if (isValid) {
-            setUser({
-              ...userData,
-              criadoEm: new Date(userData.criadoEm)
-            })
-          } else {
-            localStorage.removeItem(AUTH_STORAGE_KEY)
-          }
-          setLoading(false)
-        })
-      } catch {
-        localStorage.removeItem(AUTH_STORAGE_KEY)
+        const response = await fetch("/api/auth/me", { cache: "no-store" })
+        if (!response.ok) {
+          setUser(null)
+          return
+        }
+
+        const data = await response.json()
+        if (data?.user) {
+          setUser(parseUser(data.user))
+        }
+      } catch (error) {
+        console.error("Erro ao restaurar sessão:", error)
+      } finally {
         setLoading(false)
       }
-    } else {
-      setLoading(false)
     }
+
+    restoreSession()
   }, [])
 
-  async function verifyUser(userId: string): Promise<boolean> {
-    try {
-      const userDoc = await getDoc(doc(db, "users", userId))
-      if (userDoc.exists()) {
-        const data = userDoc.data()
-        return data.ativo === true
-      }
-      return false
-    } catch (error) {
-      console.error("[v0] Erro ao verificar usuario:", error)
-      return false
-    }
-  }
-
   const signIn = async (username: string, password: string) => {
-    console.log("[v0] Tentando login com usuario:", username)
-    
-    // Buscar usuario pelo username
-    const usersRef = collection(db, "users")
-    const q = query(usersRef, where("username", "==", username.toLowerCase()))
-    const snapshot = await getDocs(q)
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    })
 
-    if (snapshot.empty) {
-      console.log("[v0] Usuario nao encontrado")
-      throw new Error("Usuario ou senha invalidos")
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data?.error || "Erro ao fazer login")
     }
 
-    const userDoc = snapshot.docs[0]
-    const userData = userDoc.data()
-    
-    console.log("[v0] Usuario encontrado:", userData.nome)
-
-    // Verificar se usuario esta ativo
-    if (!userData.ativo) {
-      console.log("[v0] Usuario inativo")
-      throw new Error("Usuario desativado. Entre em contato com o administrador.")
-    }
-
-    // Verificar senha
-    const passwordMatch = await bcrypt.compare(password, userData.senhaHash)
-    if (!passwordMatch) {
-      console.log("[v0] Senha incorreta")
-      throw new Error("Usuario ou senha invalidos")
-    }
-
-    const userObj: User = {
-      id: userDoc.id,
-      nome: userData.nome,
-      username: userData.username,
-      tipo: userData.tipo,
-      ativo: userData.ativo,
-      criadoEm: userData.criadoEm?.toDate() || new Date(),
-    }
-
-    console.log("[v0] Login bem sucedido:", userObj)
-    
-    // Salvar no localStorage
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userObj))
-    setUser(userObj)
+    setUser(parseUser(data.user))
   }
 
   const signOut = async () => {
-    localStorage.removeItem(AUTH_STORAGE_KEY)
+    await fetch("/api/auth/logout", { method: "POST" })
     setUser(null)
   }
 

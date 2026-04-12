@@ -176,14 +176,14 @@ export async function updateEquipmentWithLog(
   userId: string,
   userName: string
 ): Promise<void> {
-  const updateData: Record<string, unknown> = { ...data }
-  
-  // Adicionar log de alteração
-  updateData.ultimaEdicaoEm = Timestamp.now()
-  updateData.ultimaEdicaoPor = userName
-  updateData.ultimaEdicaoUserId = userId
-  
-  await updateDoc(doc(db, "equipments", equipmentId), updateData)
+  const updateData = removeUndefinedFields({
+    ...data,
+    ultimaEdicaoEm: Timestamp.now(),
+    ultimaEdicaoPor: userName,
+    ultimaEdicaoUserId: userId,
+  })
+
+  await updateDoc(doc(db, "equipments", equipmentId), updateData as any)
 }
 
 export async function deleteEquipment(equipmentId: string): Promise<void> {

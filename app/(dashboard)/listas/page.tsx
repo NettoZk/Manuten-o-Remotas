@@ -56,7 +56,7 @@ interface ListManagerProps {
   description: string
   icon: React.ReactNode
   items: ListItem[]
-  onAdd: (nome: string) => Promise<void>
+  onAdd: (nome: string) => Promise<unknown>
   onUpdate: (id: string, data: Partial<ListItem>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onRefresh: () => void
