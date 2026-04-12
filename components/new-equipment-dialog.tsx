@@ -134,11 +134,11 @@ export function NewEquipmentDialog({
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Field>
-                <FieldLabel className="text-sm text-muted-foreground">Lote</FieldLabel>
+                <FieldLabel className="text-sm text-muted-foreground">OCM</FieldLabel>
                 <Input
                   value={lote}
                   onChange={(e) => setLote(e.target.value)}
-                  placeholder="Ex: L001"
+                  placeholder="Ex: 001"
                   required
                   className="h-11 bg-secondary/50"
                 />

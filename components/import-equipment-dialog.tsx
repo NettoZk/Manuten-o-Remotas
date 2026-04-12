@@ -83,7 +83,7 @@ export function ImportEquipmentDialog({
     const numeroRemota = String(row["numeroRemota"] || row["numero_remota"] || row["Número da Remota"] || row["numero"] || "").trim()
     const modelo = String(row["modelo"] || row["Modelo"] || "").trim()
     const anoFabricacao = String(row["anoFabricacao"] || row["ano_fabricacao"] || row["Ano de Fabricação"] || row["ano"] || "").trim()
-    const lote = String(row["lote"] || row["Lote"] || "").trim()
+    const lote = String(row["ocm"] || row["OCM"] || "").trim()
     const operadoraAtual = String(row["operadoraAtual"] || row["operadora_atual"] || row["Operadora"] || row["operadora"] || "").trim()
     const statusRaw = String(row["status"] || row["Status"] || "").trim()
     const situacaoRaw = String(row["situacaoRemota"] || row["situacao_remota"] || row["Situação"] || row["situacao"] || "").trim()
@@ -103,7 +103,7 @@ export function ImportEquipmentDialog({
     }
 
     if (!lote) {
-      errors.push("Lote é obrigatório")
+      errors.push("OCM é obrigatório")
     }
 
     if (!operadoraAtual) {
