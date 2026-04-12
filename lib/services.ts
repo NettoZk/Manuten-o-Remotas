@@ -9,6 +9,7 @@ import {
   where,
   orderBy,
   Timestamp,
+  UpdateData,
   setDoc,
 } from "firebase/firestore"
 import { db } from "./firebase"
@@ -176,7 +177,7 @@ export async function updateEquipmentWithLog(
   userId: string,
   userName: string
 ): Promise<void> {
-  const updateData: Record<string, unknown> = { ...data }
+  const updateData: UpdateData<Equipment> = { ...data }
   
   // Adicionar log de alteração
   updateData.ultimaEdicaoEm = Timestamp.now()
