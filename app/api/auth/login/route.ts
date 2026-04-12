@@ -59,9 +59,13 @@ export async function POST(request: Request) {
     return response
   } catch (error) {
     console.error("Erro ao criar sessão de login:", error)
-    return NextResponse.json(
-      { error: "Erro interno ao processar o login. Verifique as variáveis de ambiente e tente novamente." },
-      { status: 500 }
-    )
+
+    const isDebug = process.env.DEBUG_API_ERRORS === "true"
+    const responseBody = {
+      error: "Erro interno ao processar o login. Verifique as variáveis de ambiente e tente novamente.",
+      ...(isDebug ? { details: error instanceof Error ? error.message : String(error) } : {}),
+    }
+
+    return NextResponse.json(responseBody, { status: 500 })
   }
 }
