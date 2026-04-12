@@ -97,7 +97,7 @@ export function ImportEquipmentDialog({
     }
 
     if (!lote) {
-      errors.push("Lote é obrigatório")
+      errors.push("OCM é obrigatório")
     }
 
     if (!operadoraAtual) {
@@ -252,7 +252,7 @@ export function ImportEquipmentDialog({
         numeroRemota: "12345",
         modelo: "RT-1000",
         anoFabricacao: "2024",
-        lote: "L001",
+        OCM: "L001",
         operadoraAtual: "Claro",
         status: "nova",
         situacaoRemota: "",
@@ -262,7 +262,7 @@ export function ImportEquipmentDialog({
         numeroRemota: "67890",
         modelo: "RT-2000",
         anoFabricacao: "2023",
-        lote: "L002",
+        OCM: "L002",
         operadoraAtual: "Vivo",
         status: "usada",
         situacaoRemota: "",
