@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import { collection, query, where, getDocs } from "firebase/firestore"
-import { db } from "@/lib/server/firebase"
+import { getServerDb } from "@/lib/server/firebase"
 import { createSessionToken, getSessionCookieName } from "@/lib/server/session"
 
 export async function POST(request: Request) {
@@ -13,6 +13,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Nome de usuário e senha são obrigatórios." }, { status: 400 })
     }
 
+    const db = getServerDb()
     const usersRef = collection(db, "users")
     const usersQuery = query(usersRef, where("username", "==", username.toLowerCase()))
     const snapshot = await getDocs(usersQuery)

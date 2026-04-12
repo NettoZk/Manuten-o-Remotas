@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import { collection, query, where, getDocs, setDoc, doc, Timestamp } from "firebase/firestore"
-import { db } from "@/lib/server/firebase"
+import { getServerDb } from "@/lib/server/firebase"
 import { isSetupAllowed } from "@/lib/server/session"
 
 interface SetupRequest {
@@ -15,6 +15,7 @@ export async function GET() {
     return NextResponse.json({ error: "Setup não está disponível." }, { status: 403 })
   }
 
+  const db = getServerDb()
   const usersRef = collection(db, "users")
   const q = query(usersRef, where("tipo", "==", "admin"))
   const snapshot = await getDocs(q)
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "A senha deve ter pelo menos 6 caracteres." }, { status: 400 })
   }
 
+  const db = getServerDb()
   const usersRef = collection(db, "users")
   const adminQuery = query(usersRef, where("tipo", "==", "admin"))
   const adminSnapshot = await getDocs(adminQuery)
