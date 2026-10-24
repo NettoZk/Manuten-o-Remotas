@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { ChartTooltip } from "@/components/ui/chart"
 import { ReportMonthFilter } from "@/components/report-month-filter"
+import { SituationSummary } from "@/components/situation-summary"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer } from "recharts"
 import { useLiveData } from "@/contexts/live-data-context"
 import { calculateDashboard, monthKey, monthLabel } from "@/lib/dashboard"
@@ -222,7 +223,7 @@ export default function DashboardPage() {
             )}
             {!historicalPending && (isCurrentMonth || !reportError) && <>
               <p className="mb-3 text-sm font-medium">{report?.totalEquipments || 0} remota(s) ativa(s) · {isCurrentMonth ? "posição atual" : "posição no fechamento do mês"}</p>
-              <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Situação</th><th>Remotas</th><th>Percentual</th></tr></thead><tbody>{situationRows.map((item) => <tr key={item.name} className="border-b"><td className="py-2"><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: situationColor(item.name) }} />{item.name}</td><td>{item.value}</td><td>{report?.totalEquipments ? (item.value / report.totalEquipments * 100).toFixed(1) : "0.0"}%</td></tr>)}</tbody></table>
+              <SituationSummary rows={situationRows} total={report?.totalEquipments || 0} />
               {!!report?.missingHistory && <p role="note" className="mt-3 text-xs text-muted-foreground">{report.missingHistory} remota(s) não possuem histórico suficiente para determinar a situação neste mês e estão identificadas como “Sem histórico no período”.</p>}
             </>}
           </CardContent>

@@ -165,5 +165,6 @@
   [data-monthly-report] { position: absolute; left: 0; top: 0; width: 100%; color: #111; background: white; border: none; }
   [data-monthly-report] .text-muted-foreground { color: #444; }
   [data-monthly-report] .text-foreground { color: #111; }
+  [data-situation-table] { display: block !important; }
   main { height: auto !important; overflow: visible !important; }
 }
