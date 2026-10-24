@@ -13,7 +13,7 @@ export function equipmentFromDoc(doc: RecordDoc): Equipment {
   return { ...data, id: doc.id, situacaoRemota: operationalSituation(data.situacaoRemota), dataCadastro: date(data.dataCadastro) || new Date(0),
     situacaoAtualizadaEm: date(data.situacaoAtualizadaEm), ultimaEdicaoEm: date(data.ultimaEdicaoEm),
     arquivadoEm: date(data.arquivadoEm), emManutencaoDesde: date(data.emManutencaoDesde),
-    garantia: data.garantia ? { ...data.garantia, enviadaEm: date(data.garantia.enviadaEm), retornadaEm: date(data.garantia.retornadaEm) } : undefined,
+    garantia: data.garantia ? { ...data.garantia, separadaEm: date(data.garantia.separadaEm), enviadaEm: date(data.garantia.enviadaEm), retornadaEm: date(data.garantia.retornadaEm), canceladaEm: date(data.garantia.canceladaEm) } : undefined,
     emManutencaoPor: data.emManutencaoPor || undefined, emManutencaoNome: data.emManutencaoNome || undefined,
     manutencaoId: data.manutencaoId || undefined, estadoRegistro: data.estadoRegistro || "ativo",
   } as Equipment

@@ -11,6 +11,10 @@ export function isWarrantySentSituation(value: string) {
   const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ")
   return normalized === "em garantia" || /^enviad[ao]s? (para |a |para a )?garantia$/.test(normalized)
 }
+export function isWarrantySeparatedSituation(value: string) {
+  const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ")
+  return /^separad[ao]s? para (a )?garantia$/.test(normalized)
+}
 export const equipmentSchema = z.object({
   numeroRemota: text.max(100), modelo: text.max(160), anoFabricacao: text.max(20),
   // O nome persistido continua sendo lote; seu significado na interface é OCM.
@@ -19,7 +23,7 @@ export const equipmentSchema = z.object({
 })
 export const warrantyReturnSchema = equipmentSchema.extend({
   garantiaId: text.max(200).refine((value) => !value.includes("/"), "Identificador inválido"),
-  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value) && !isWarrantySentSituation(value), "Escolha uma situação de retorno fora de manutenção e garantia").refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE),
+  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value) && !isWarrantySentSituation(value) && !isWarrantySeparatedSituation(value), "Escolha uma situação de retorno fora de manutenção, separação e envio à garantia").refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE),
   observacoesRetorno: text.min(10, "Descreva o retorno com pelo menos 10 caracteres").max(2000),
 }).superRefine((data, ctx) => {
   if (data.status === "Nova" && data.situacaoRemota !== "Nova") ctx.addIssue({ code: "custom", path: ["situacaoRemota"], message: "Equipamento novo deve retornar com a situação Nova" })
@@ -40,10 +44,10 @@ export const finalizationSchema = z.object({
   servicosRealizadosOutro: z.string().trim().max(2000).optional(),
   operadoraDepois: text.max(100), checklist: checklistSchema,
   observacoes: z.string().trim().max(5000),
-  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value), "Escolha uma situação final diferente de Manutenção").refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE),
+  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value), "Escolha uma situação final diferente de Manutenção").refine((value) => !isWarrantySentSituation(value), "Conclua como Separado para garantia e depois confirme o envio físico").refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE),
   motivoGarantia: z.string().trim().max(2000).optional(),
 }).superRefine((data, ctx) => {
-  if (isWarrantySentSituation(data.situacaoRemota) && (data.motivoGarantia?.length || 0) < 10) ctx.addIssue({ code: "custom", path: ["motivoGarantia"], message: "Descreva o motivo do envio para garantia com pelo menos 10 caracteres" })
+  if (isWarrantySeparatedSituation(data.situacaoRemota) && (data.motivoGarantia?.length || 0) < 10) ctx.addIssue({ code: "custom", path: ["motivoGarantia"], message: "Descreva o motivo da separação para garantia com pelo menos 10 caracteres" })
   if (data.defeitoEncontrado === "Outro" && !data.defeitoEncontradoOutro) ctx.addIssue({ code: "custom", path: ["defeitoEncontradoOutro"], message: "Descreva o defeito encontrado" })
   if (data.servicosRealizados.includes("Outro") && !data.servicosRealizadosOutro) ctx.addIssue({ code: "custom", path: ["servicosRealizadosOutro"], message: "Descreva o serviço realizado" })
 })

@@ -5,6 +5,20 @@ import type { Equipment } from "@/lib/types"
 const equipment: Equipment = { id: "qa-1", numeroRemota: "IMEI-1", modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-1", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Triagem", dataCadastro: new Date("2026-01-01") }
 const sent: Equipment = { ...equipment, situacaoRemota: "Enviado para Garantia", garantia: { id: "warranty-1", status: "enviada", enviadaEm: new Date(), motivo: "Falha persistente" } }
 describe("pré-validação dos lotes por seleção e planilha", () => {
+  const prepared: Equipment = { ...equipment, situacaoRemota: "Separado para garantia", garantia: { id: "preparacao-1", status: "separada", maintenanceId: "m1", motivo: "Defeito confirmado em bancada" } }
+  it("confirma a saída e cancela somente separações vinculadas, com motivo obrigatório no cancelamento", () => {
+    const row = { numeroRemota: equipment.numeroRemota }
+    expect(buildBulkPreview("enviar_garantia", [row], [prepared])[0].command).toMatchObject({ operation: "sendWarranty", args: [equipment.id, "preparacao-1"] })
+    expect(buildBulkPreview("cancelar_separacao", [row], [prepared])[0].errors.join()).toContain("10 caracteres")
+    expect(buildBulkPreview("cancelar_separacao", [{ ...row, motivoCancelamento: "Equipamento retornará para nova avaliação" }], [prepared])[0].command?.operation).toBe("cancelWarrantyPreparation")
+    expect(buildBulkPreview("enviar_garantia", [row], [equipment])[0].command).toBeUndefined()
+    expect(buildBulkPreview("enviar_garantia", [row], [{ ...prepared, garantia: undefined }])[0].command).toBeUndefined()
+  })
+  it("impede movimentações comuns enquanto aguarda o envio e gera modelos específicos", () => {
+    for (const action of ["alterar_situacao", "iniciar_manutencao", "arquivar"] as const) expect(buildBulkPreview(action, [{ numeroRemota: equipment.numeroRemota, situacaoRemota: "Triagem", defeitoRelatado: "Sem sinal" }], [prepared])[0].errors.join()).toContain("separação")
+    expect(movementTemplate("enviar_garantia", [prepared])[0]).toEqual({ numeroRemota: equipment.numeroRemota })
+    expect(movementTemplate("cancelar_separacao", [prepared])[0]).toEqual({ numeroRemota: equipment.numeroRemota, motivoCancelamento: "" })
+  })
   it("prepara movimentos diferentes e rejeita duplicidade, remota ausente e situação igual", () => {
     const preview = buildBulkPreview("alterar_situacao", [
       { numeroRemota: "IMEI-1", situacaoRemota: "Recuperada" }, { numeroRemota: "IMEI-1", situacaoRemota: "Sucata" }, { numeroRemota: "AUSENTE", situacaoRemota: "Recuperada" },
@@ -15,7 +29,7 @@ describe("pré-validação dos lotes por seleção e planilha", () => {
     expect(buildBulkPreview("alterar_situacao", [{ numeroRemota: "IMEI-1", situacaoRemota: "Triagem" }], [equipment])[0].errors.join()).toContain("igual")
   })
   it("não permite mudar situação para pular os procedimentos de garantia ou manutenção", () => {
-    for (const situation of ["Manutenção", "Enviado para Garantia", "Imei alterado na garantia"]) expect(buildBulkPreview("alterar_situacao", [{ numeroRemota: "IMEI-1", situacaoRemota: situation }], [equipment])[0].command).toBeUndefined()
+    for (const situation of ["Manutenção", "Enviado para Garantia", "Separado para garantia", "Imei alterado na garantia"]) expect(buildBulkPreview("alterar_situacao", [{ numeroRemota: "IMEI-1", situacaoRemota: situation }], [equipment])[0].command).toBeUndefined()
   })
   it("exclui arquivadas e bloqueadas e prepara abertura com defeito Outro descrito", () => {
     expect(buildBulkPreview("arquivar", [{ numeroRemota: "IMEI-1" }], [{ ...equipment, estadoRegistro: "inativo" }])[0].errors.join()).toContain("arquivada")

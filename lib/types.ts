@@ -10,6 +10,7 @@ export interface User {
 }
 
 export type EquipmentStatus = "Nova" | "Usada"
+export type WarrantyStatus = "separada" | "enviada" | "retornada" | "cancelada"
 
 export interface EquipmentSituation {
   id: string
@@ -69,7 +70,7 @@ export interface Equipment {
   emManutencaoNome?: string      // Nome do técnico responsável
   emManutencaoDesde?: Date       // Data/hora que iniciou
   manutencaoId?: string          // ID da manutenção atual
-  garantia?: { id: string; status: "enviada" | "retornada"; enviadaEm: Date; retornadaEm?: Date; motivo: string; maintenanceId?: string }
+  garantia?: { id: string; status: WarrantyStatus; separadaEm?: Date; enviadaEm?: Date; retornadaEm?: Date; canceladaEm?: Date; motivo: string; maintenanceId?: string }
   remotaAnteriorId?: string
   remotaAnteriorNumero?: string
   garantiaOrigemId?: string
@@ -81,12 +82,17 @@ export interface Warranty {
   id: string
   equipmentId: string
   numeroRemota: string
-  status: "enviada" | "retornada"
-  enviadaEm: Date
-  enviadaPor: string
+  status: WarrantyStatus
+  separadaEm?: Date
+  separadaPor?: string
+  enviadaEm?: Date
+  enviadaPor?: string
+  canceladaEm?: Date
+  canceladaPor?: string
+  motivoCancelamento?: string
   motivo: string
   maintenanceId?: string
-  situacaoEnvio: string
+  situacaoEnvio?: string
   retornadaEm?: Date
   retornadaPor?: string
   observacoesRetorno?: string

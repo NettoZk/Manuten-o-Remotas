@@ -11,7 +11,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Wrench, CheckSquare } from "lucide-react"
 import { finalizeMaintenance } from "@/lib/services"
-import { finalizationSchema, isWarrantySentSituation } from "@/lib/validation"
+import { finalizationSchema, isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
 import { useLiveData } from "@/contexts/live-data-context"
 import type { Maintenance, Equipment, Defect, Operator, ChecklistItem, ChecklistStatus } from "@/lib/types"
 
@@ -44,7 +44,7 @@ export function MaintenanceForm({
   const [isLoading, setIsLoading] = useState(false)
   const live = useLiveData()
   const services = live.services.filter((item) => item.ativo)
-  const equipmentSituations = live.situations.filter((item) => item.ativo && !["manutenção", "manutencao"].includes(item.nome.toLocaleLowerCase("pt-BR")))
+  const equipmentSituations = live.situations.filter((item) => item.ativo && !isWarrantySentSituation(item.nome) && !["manutenção", "manutencao"].includes(item.nome.toLocaleLowerCase("pt-BR")))
   
   const [defeitoEncontrado, setDefeitoEncontrado] = useState(maintenance.defeitoEncontrado || "")
   const [defeitoEncontradoOutro, setDefeitoEncontradoOutro] = useState(maintenance.defeitoEncontradoOutro || "")
@@ -55,7 +55,7 @@ export function MaintenanceForm({
   const [observacoes, setObservacoes] = useState(maintenance.observacoes || "")
   const [situacaoRemota, setSituacaoRemota] = useState("")
   const [motivoGarantia, setMotivoGarantia] = useState(maintenance.motivoGarantia || "")
-  const sendingToWarranty = isWarrantySentSituation(situacaoRemota)
+  const sendingToWarranty = isWarrantySeparatedSituation(situacaoRemota)
 
   const handleChecklistChange = (key: keyof ChecklistItem, value: ChecklistStatus) => {
     setChecklist((prev) => ({ ...prev, [key]: value }))
@@ -207,9 +207,9 @@ export function MaintenanceForm({
           </Field>
 
           {sendingToWarranty && <Field>
-            <FieldLabel htmlFor="motivo-garantia">Motivo do envio para garantia *</FieldLabel>
+            <FieldLabel htmlFor="motivo-garantia">Motivo da separação para garantia *</FieldLabel>
             <Textarea id="motivo-garantia" required minLength={10} maxLength={2000} value={motivoGarantia} onChange={(event) => setMotivoGarantia(event.target.value)} placeholder="Descreva os testes realizados e por que a remota precisa seguir para garantia" />
-            <p className="text-xs text-muted-foreground">Ao concluir, esta manutenção ficará vinculada ao envio para garantia, com o técnico, defeitos, serviços e checklist registrados.</p>
+            <p className="text-xs text-muted-foreground">Ao concluir, a remota ficará separada e vinculada a esta avaliação. Confirme o envio em Equipamentos somente quando ocorrer a saída física.</p>
           </Field>}
 
           <Field>
@@ -273,7 +273,7 @@ export function MaintenanceForm({
       <div className="flex justify-end">
         <Button onClick={handleFinalize} disabled={isLoading || live.loading || Boolean(live.error)} size="lg">
           {isLoading ? <Spinner className="mr-2 h-4 w-4" /> : null}
-        {sendingToWarranty ? "Finalizar manutenção e enviar para garantia" : "Finalizar Manutenção"}
+        {sendingToWarranty ? "Finalizar manutenção e separar para garantia" : "Finalizar Manutenção"}
         </Button>
       </div>
     </div>

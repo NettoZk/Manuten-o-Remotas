@@ -28,11 +28,13 @@ export function WarrantyHistory({ equipment, onViewLinked }: { equipment: Equipm
     <CardContent className="space-y-3">
       {equipment.remotaAnteriorId && <div className="rounded-lg bg-muted/30 p-3 text-sm">Originada de retorno da garantia. <Button variant="link" className="h-auto px-0" onClick={() => onViewLinked(equipment.remotaAnteriorId!)}>Ver remota anterior {equipment.remotaAnteriorNumero}</Button></div>}
       {equipment.substituidaPorId && <div className="rounded-lg bg-muted/30 p-3 text-sm">Cadastro arquivado após troca de IMEI. <Button variant="link" className="h-auto px-0" onClick={() => onViewLinked(equipment.substituidaPorId!)}>Ver remota substituta {equipment.substituidaPorNumero}</Button></div>}
-      {loading ? <Spinner className="h-5 w-5" /> : error ? <p role="alert" className="text-sm">Não foi possível carregar as garantias. <button className="underline" onClick={() => setRevision((value) => value + 1)}>Tentar novamente</button></p> : !records.length ? <p className="text-sm text-muted-foreground">Nenhum envio para garantia registrado.</p> : records.map((record) => <div key={record.id} className="space-y-1 rounded-lg border border-border/50 p-3 text-sm">
-        <p className="font-medium">{record.status === "enviada" ? "Em garantia" : "Retorno registrado"} · Remota {record.numeroRemota}</p>
-        <p>Envio: {record.enviadaEm.toLocaleString("pt-BR")} · {record.enviadaPor}</p>
+      {loading ? <Spinner className="h-5 w-5" /> : error ? <p role="alert" className="text-sm">Não foi possível carregar as garantias. <button className="underline" onClick={() => setRevision((value) => value + 1)}>Tentar novamente</button></p> : !records.length ? <p className="text-sm text-muted-foreground">Nenhum procedimento de garantia registrado.</p> : records.map((record) => <div key={record.id} className="space-y-1 rounded-lg border border-border/50 p-3 text-sm">
+        <p className="font-medium">{{ separada: "Separada · aguardando envio", enviada: "Em garantia", retornada: "Retorno registrado", cancelada: "Separação cancelada" }[record.status]} · Remota {record.numeroRemota}</p>
+        {record.separadaEm && <p>Separação: {record.separadaEm.toLocaleString("pt-BR")} · {record.separadaPor}</p>}
+        {record.enviadaEm && <p>Envio: {record.enviadaEm.toLocaleString("pt-BR")} · {record.enviadaPor}</p>}
         {record.maintenanceId ? <Button variant="link" asChild className="h-auto px-0"><Link href={`/historico?manutencao=${encodeURIComponent(record.maintenanceId)}`}>Ver manutenção do envio</Link></Button> : <p className="text-xs text-muted-foreground">Envio anterior sem manutenção vinculada.</p>}
         <p className="whitespace-pre-wrap">Motivo: {record.motivo}</p>
+        {record.canceladaEm && <><p>Cancelamento: {record.canceladaEm.toLocaleString("pt-BR")} · {record.canceladaPor}</p><p className="whitespace-pre-wrap">Justificativa: {record.motivoCancelamento}</p></>}
         {record.retornadaEm && <>
           <p>Retorno: {record.retornadaEm.toLocaleString("pt-BR")} · {record.retornadaPor}</p>
           <p>Situação no retorno: {record.situacaoRetorno}</p>

@@ -16,7 +16,7 @@ import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { updateEquipmentWithLog } from "@/lib/services"
-import { isMaintenanceSituation, isWarrantySentSituation } from "@/lib/validation"
+import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
 import type { Equipment, EquipmentSituation, EquipmentStatus } from "@/lib/types"
 import { useAuth } from "@/contexts/auth-context"
 import { Pencil } from "lucide-react"
@@ -151,7 +151,7 @@ export function EditEquipmentDialog({
                   onChange={(e) => setSituacaoRemota(e.target.value)}
                 >
                   <option value="">Selecione...</option>
-                  {equipmentSituations.filter((item) => !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome)).map((situation) => (
+                  {equipmentSituations.filter((item) => !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome)).map((situation) => (
                     <option key={situation.id} value={situation.nome}>
                       {situation.nome}
                     </option>

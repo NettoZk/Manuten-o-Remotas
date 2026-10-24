@@ -2,12 +2,20 @@ import { describe, expect, it } from "vitest"
 import { equipmentFromDoc } from "@/lib/firestore-records"
 import { parseEquipmentRow } from "@/lib/equipment-import"
 import { isWarrantyImeiChangeSituation } from "@/lib/equipment-situations"
-import { equipmentSchema, finalizationSchema, warrantyReturnSchema } from "@/lib/validation"
+import { equipmentSchema, finalizationSchema, warrantyReturnSchema, isWarrantySeparatedSituation } from "@/lib/validation"
 
 const obsolete = "IMEI alterado na garantia"
 const equipment = { numeroRemota: "NOVO-IMEI", modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-1", operadoraAtual: "Claro", status: "Nova" }
 
 describe("troca de IMEI como vínculo de garantia", () => {
+  it("exige avaliação e motivo na separação, bloqueando envio direto e nova separação pelo retorno", () => {
+    const final = { defeitoEncontrado: "Sem sinal", servicosRealizados: ["Teste de bancada"], operadoraDepois: "Claro", observacoes: "", situacaoRemota: "Separado para garantia", checklist: { leituraSIMCard: "OK", firmwareAtualizado: "OK", sinal: "Falha", apnEnergiza: "OK", comunicacaoMedidor: "Falha", comunicacaoIRIS: "Falha" } }
+    expect(isWarrantySeparatedSituation("  Separada  para a Garantia ")).toBe(true)
+    expect(finalizationSchema.safeParse(final).success).toBe(false)
+    expect(finalizationSchema.safeParse({ ...final, motivoGarantia: "Defeito persistente após avaliação em bancada" }).success).toBe(true)
+    expect(finalizationSchema.safeParse({ ...final, motivoGarantia: "Defeito persistente após avaliação em bancada", situacaoRemota: "Enviado para Garantia" }).success).toBe(false)
+    expect(warrantyReturnSchema.safeParse({ ...equipment, status: "Usada", garantiaId: "g1", observacoesRetorno: "Retorno avaliado em bancada", situacaoRemota: "Separado para garantia" }).success).toBe(false)
+  })
   it("reconhece o rótulo legado e preserva as situações operacionais de garantia", () => {
     expect(isWarrantyImeiChangeSituation("  Imei  Alterado na Garantia  ")).toBe(true)
     expect(isWarrantyImeiChangeSituation("Número/IMEI substituído na garantia")).toBe(true)

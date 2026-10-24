@@ -18,11 +18,11 @@ describe("importação e campos obrigatórios", () => {
   it.each(["numeroRemota", "modelo", "anoFabricacao", "OCM", "operadoraAtual"])("recusa importação sem %s", (field) => {
     expect(parseEquipmentRow({ ...row, [field]: "" }).errors.length).toBeGreaterThan(0)
   })
-  it.each(["Manutenção", "Enviado para Garantia", "Imei alterado na garantia"])("respeita o procedimento para %s", (situacaoRemota) => {
+  it.each(["Manutenção", "Enviado para Garantia", "Separado para garantia", "Imei alterado na garantia"])("respeita o procedimento para %s", (situacaoRemota) => {
     expect(parseEquipmentRow({ ...row, situacaoRemota }).errors.length).toBeGreaterThan(0)
   })
   it("aceita situações operacionais distintas e rejeita condição inválida", () => {
-    for (const name of ["Nova", "Triagem", "Recuperada", "Sucata", "Separado para garantia", "Disponibilizado para estoque", "Disponibilizada para polo"]) expect(parseEquipmentRow({ ...row, situacaoRemota: name }).errors).toEqual([])
+    for (const name of ["Nova", "Triagem", "Recuperada", "Sucata", "Disponibilizado para estoque", "Disponibilizada para polo"]) expect(parseEquipmentRow({ ...row, situacaoRemota: name }).errors).toEqual([])
     expect(parseEquipmentRow({ ...row, status: "inexistente" }).errors).toContain("Status inválido. Use nova ou usada")
   })
   it("aplica limites de usuário e tamanho da senha em bytes", () => {

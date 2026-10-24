@@ -25,9 +25,10 @@ import { EditEquipmentDialog } from "@/components/edit-equipment-dialog"
 import { DeleteEquipmentDialog } from "@/components/delete-equipment-dialog"
 import { ImportEquipmentDialog } from "@/components/import-equipment-dialog"
 import { WarrantyDialog } from "@/components/warranty-dialog"
+import { WarrantyPreparationActions } from "@/components/warranty-preparation-actions"
 import { WarrantyHistory } from "@/components/warranty-history"
 import { BulkMovementDialog } from "@/components/bulk-movement-dialog"
-import { isWarrantySentSituation } from "@/lib/validation"
+import { isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
 import { filterEquipmentRegistration, searchEquipments, type EquipmentRegistrationFilter } from "@/lib/equipment-search"
 import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload, ShieldCheck } from "lucide-react"
 import { format } from "date-fns"
@@ -290,6 +291,7 @@ export default function EquipmentsPage() {
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
+                          {canMove && equipment.estadoRegistro !== "inativo" && <WarrantyPreparationActions equipment={equipment} compact />}
                           {isAdmin && equipment.estadoRegistro !== "inativo" && (
                             <>
                               {equipment.garantia?.status === "enviada" && <Button size="sm" variant="ghost" title="Registrar retorno da garantia" onClick={() => setWarrantyEquipmentId(equipment.id)}>
@@ -300,7 +302,7 @@ export default function EquipmentsPage() {
                                 variant="ghost"
                                 onClick={() => handleOpenEdit(equipment)}
                                 title="Editar"
-                                disabled={equipment.garantia?.status === "enviada"}
+                                disabled={equipment.garantia?.status === "enviada" || equipment.garantia?.status === "separada"}
                               >
                                 <Pencil className="h-4 w-4" />
                               </Button>
@@ -309,7 +311,7 @@ export default function EquipmentsPage() {
                                 variant="ghost"
                                 onClick={() => handleOpenChangeSituation(equipment)}
                                 title="Alterar Situação"
-                                disabled={equipment.garantia?.status === "enviada"}
+                                disabled={equipment.garantia?.status === "enviada" || equipment.garantia?.status === "separada"}
                               >
                                 <RefreshCw className="h-4 w-4" />
                               </Button>
@@ -318,7 +320,7 @@ export default function EquipmentsPage() {
                                 variant="ghost"
                                 onClick={() => handleOpenDelete(equipment)}
                                 title="Excluir"
-                                disabled={equipment.garantia?.status === "enviada"}
+                                disabled={equipment.garantia?.status === "enviada" || equipment.garantia?.status === "separada"}
                                 className="text-destructive hover:text-destructive"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -439,7 +441,8 @@ export default function EquipmentsPage() {
                 </CardContent>
               </Card>
 
-              {isAdmin && selectedEquipment.estadoRegistro !== "inativo" && (selectedEquipment.garantia?.status === "enviada" ? <Button variant="outline" onClick={() => setWarrantyEquipmentId(selectedEquipment.id)}><ShieldCheck className="mr-2 h-4 w-4" />Registrar retorno da garantia</Button> : <div className="space-y-2 text-sm"><p className="text-muted-foreground">O envio para garantia exige uma manutenção com diagnóstico, serviços e motivo registrados.</p><Button variant="outline" asChild><Link href={`/manutencao?remota=${encodeURIComponent(selectedEquipment.numeroRemota)}`}>Abrir procedimento de manutenção</Link></Button></div>)}
+              {canMove && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status === "separada" && <div className="flex flex-wrap gap-2"><WarrantyPreparationActions equipment={selectedEquipment} /></div>}
+              {isAdmin && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status !== "separada" && (selectedEquipment.garantia?.status === "enviada" ? <Button variant="outline" onClick={() => setWarrantyEquipmentId(selectedEquipment.id)}><ShieldCheck className="mr-2 h-4 w-4" />Registrar retorno da garantia</Button> : <div className="space-y-2 text-sm"><p className="text-muted-foreground">Para encaminhar à garantia, conclua a avaliação em manutenção como Separado para garantia. Depois, confirme a saída física em Equipamentos.</p><Button variant="outline" asChild><Link href={`/manutencao?remota=${encodeURIComponent(selectedEquipment.numeroRemota)}`}>Abrir procedimento de manutenção</Link></Button></div>)}
               <WarrantyHistory equipment={selectedEquipment} onViewLinked={(id) => {
                 const linked = live.equipments.find((item) => item.id === id)
                 if (linked) handleViewDetails(linked)
@@ -601,7 +604,7 @@ export default function EquipmentsPage() {
                   onChange={(e) => setNewSituacao(e.target.value)}
                 >
                   <option value="">Selecione a situação...</option>
-                  {equipmentSituations.filter((item) => !isWarrantySentSituation(item.nome) && item.nome !== "Manutenção").map((situation) => (
+                  {equipmentSituations.filter((item) => !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome) && item.nome !== "Manutenção").map((situation) => (
                     <option key={situation.id} value={situation.nome}>
                       {situation.nome}
                     </option>

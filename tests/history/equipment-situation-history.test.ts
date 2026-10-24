@@ -25,7 +25,7 @@ beforeEach(async () => {
   const response = await fetch("http://127.0.0.1:8181/emulator/v1/projects/demo-remotas-history/databases/(default)/documents", { method: "DELETE" })
   expect(response.ok).toBe(true)
   const batch = db.batch()
-  for (const [collection, names] of Object.entries({ operators: ["Claro"], equipment_status: ["Nova", "Triagem", "Manutenção", "Recuperada", "Enviado para Garantia"], defects: ["Sem comunicação"], services: ["Teste de bancada"] })) {
+  for (const [collection, names] of Object.entries({ operators: ["Claro"], equipment_status: ["Nova", "Triagem", "Manutenção", "Recuperada", "Enviado para Garantia", "Separado para garantia"], defects: ["Sem comunicação"], services: ["Teste de bancada"] })) {
     names.forEach((nome, index) => batch.set(db.collection(collection).doc(`ref-${index}`), { nome, ativo: true }))
   }
   await batch.commit()
@@ -74,13 +74,16 @@ describe("histórico gravado nas transações reais do Firestore", () => {
     expect((await report()).situations).toEqual([{ name: "Manutenção", value: 1 }])
     const finalization = {
       defeitoEncontrado: "Sem comunicação", servicosRealizados: ["Teste de bancada"], operadoraDepois: "Claro", observacoes: "",
-      situacaoRemota: "Enviado para Garantia", motivoGarantia: "Falha persistente após os testes em bancada",
+      situacaoRemota: "Separado para garantia", motivoGarantia: "Falha persistente após os testes em bancada",
       checklist: { leituraSIMCard: "OK", firmwareAtualizado: "OK", sinal: "Falha", apnEnergiza: "OK", comunicacaoMedidor: "Falha", comunicacaoIRIS: "Falha" },
     }
     await executeOperation("finalizeMaintenance", [maintenanceId, id, finalization], actor)
     const beforeRepeat = (await events(id)).length
     await executeOperation("finalizeMaintenance", [maintenanceId, id, finalization], actor)
     expect(await events(id)).toHaveLength(beforeRepeat)
+    const prepared = (await db.collection("equipments").doc(id).get()).data()!
+    expect(prepared.garantia.status).toBe("separada")
+    await executeOperation("sendWarranty", [id, prepared.garantia.id], actor)
     const sent = (await db.collection("equipments").doc(id).get()).data()!
     await executeOperation("returnWarranty", [id, { ...data, status: "Usada", numeroRemota: "TEST-HIST-002", situacaoRemota: "Recuperada", garantiaId: sent.garantia.id, observacoesRetorno: "Fabricante substituiu o equipamento e informou novo IMEI" }], actor)
     const old = (await db.collection("equipments").doc(id).get()).data()!

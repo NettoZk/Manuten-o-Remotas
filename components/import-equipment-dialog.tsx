@@ -65,6 +65,7 @@ export function ImportEquipmentDialog({
       const existing = await getEquipmentByNumber(numeroRemota)
       exists = !!existing
       if (existing?.estadoRegistro === "inativo") errors.push("Esta remota está arquivada")
+      if (existing?.garantia?.status === "separada") errors.push("Confirme o envio ou cancele a separação antes de importar alterações")
       if (existing?.garantia?.status === "enviada") errors.push("Registre o retorno da garantia antes de importar alterações")
       if (existing?.manutencaoId || existing?.emManutencaoPor) errors.push("Finalize a manutenção antes de importar alterações")
     }

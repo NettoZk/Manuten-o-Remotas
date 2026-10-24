@@ -15,6 +15,12 @@ function rows(report: ReturnType<typeof equipmentSituationReport>) {
 }
 
 describe("situação mensal de todas as remotas", () => {
+  it("mantém a separação em outubro quando a saída física ocorre em novembro no horário de Brasília", () => {
+    const equipments = [equipment("garantia", "Enviado para Garantia")]
+    const history = [event("garantia", "Separado para garantia", "2026-11-01T02:59:00Z"), event("garantia", "Enviado para Garantia", "2026-11-02T12:00:00Z", 2)]
+    expect(rows(equipmentSituationReport(equipments, history, "2026-10", now))).toEqual({ "Separado para garantia": 1 })
+    expect(rows(equipmentSituationReport(equipments, history, "2026-11", now))).toEqual({ "Enviado para Garantia": 1 })
+  })
   it("conta cada cadastro ativo, inclusive sem manutenção e em manutenção", () => {
     const report = equipmentSituationReport([
       equipment("nova", "Nova"), equipment("triagem"), equipment("recuperada", "Recuperada"),

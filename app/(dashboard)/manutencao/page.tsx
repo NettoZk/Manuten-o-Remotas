@@ -281,7 +281,7 @@ export default function MaintenancePage() {
           {viewMode === "edit" && equipment.estadoRegistro !== "inativo" && (
             <>
               {/* Verificar se a remota está bloqueada por outro técnico */}
-              {equipment.garantia?.status === "enviada" ? <Card className="border-warning/30 bg-warning/5"><CardContent className="py-6"><p className="font-medium">Remota enviada para garantia</p><p className="mt-1 text-sm text-muted-foreground">Registre o retorno em Equipamentos antes de iniciar uma manutenção.</p></CardContent></Card> : equipment.emManutencaoPor &&
+              {equipment.garantia?.status === "separada" ? <Card className="border-warning/30 bg-warning/5"><CardContent className="py-6"><p className="font-medium">Remota separada para garantia</p><p className="mt-1 text-sm text-muted-foreground">Confirme o envio em Equipamentos na saída física ou cancele a separação com justificativa antes de iniciar outra manutenção.</p></CardContent></Card> : equipment.garantia?.status === "enviada" ? <Card className="border-warning/30 bg-warning/5"><CardContent className="py-6"><p className="font-medium">Remota enviada para garantia</p><p className="mt-1 text-sm text-muted-foreground">Registre o retorno em Equipamentos antes de iniciar uma manutenção.</p></CardContent></Card> : equipment.emManutencaoPor &&
                equipment.emManutencaoPor !== user?.id && 
                !currentMaintenance ? (
                 <Card className="border-destructive/30 bg-destructive/5">

@@ -41,7 +41,7 @@ beforeEach(async () => {
   const hash = await bcrypt.hash("teste1234", 4)
   const batch = db.batch()
   for (const actor of [admin, tech, viewer]) batch.set(db.collection("users").doc(actor.id), { nome: actor.nome, username: actor.username, tipo: actor.tipo, ativo: true, senhaHash: hash, criadoEm: Timestamp.now() })
-  for (const [name, values] of Object.entries({ operators: ["Claro", "Vivo"], equipment_status: ["Nova", "Triagem", "Manutenção", "Recuperada", "Enviado para Garantia", "Sucata"], defects: ["Sem comunicação"], services: ["Teste de bancada"] })) values.forEach((nome, index) => batch.set(db.collection(name).doc(`ref-${index}`), { nome, ativo: true }))
+  for (const [name, values] of Object.entries({ operators: ["Claro", "Vivo"], equipment_status: ["Nova", "Triagem", "Manutenção", "Recuperada", "Enviado para Garantia", "Separado para garantia", "Sucata"], defects: ["Sem comunicação"], services: ["Teste de bancada"] })) values.forEach((nome, index) => batch.set(db.collection(name).doc(`ref-${index}`), { nome, ativo: true }))
   await batch.commit()
   process.env.FIREBASE_SETUP_TOKEN = "token-ficticio-de-setup"
 })
@@ -169,17 +169,19 @@ describe("procedimentos de manutenção e garantia", () => {
   })
   it("exige manutenção para enviar à garantia, motivo e bloqueia retorno sem envio", async () => {
     const id = await executeOperation("createEquipment", [equipment], admin) as string
-    await expect(executeOperation("sendWarranty", [id], admin)).rejects.toThrow("conclusão")
+    await expect(executeOperation("sendWarranty", [id, "inexistente"], admin)).rejects.toThrow("separação pendente")
     await expect(executeOperation("updateEquipmentSituationManual", [id, { situacaoRemota: "Enviado para Garantia" }], admin)).rejects.toThrow("conclusão")
     await expect(executeOperation("returnWarranty", [id, { ...equipment, garantiaId: "inexistente", observacoesRetorno: "Retorno sem envio anterior" }], admin)).rejects.toThrow("Não há envio")
     const maintenanceId = await executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech) as string
-    await expect(executeOperation("finalizeMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Enviado para Garantia", motivoGarantia: "curto" }], tech)).rejects.toThrow("motivo")
+    await expect(executeOperation("finalizeMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Separado para garantia", motivoGarantia: "curto" }], tech)).rejects.toThrow("motivo")
   })
   it("mantém garantia aberta ao recusar IMEI já cadastrado e impede excluir cadastros com histórico", async () => {
     const other = await executeOperation("createEquipment", [{ ...equipment, numeroRemota: "JA-EXISTE" }], admin) as string
     await executeOperation("archiveEquipment", [other], admin)
     const { id, maintenanceId } = await openMaintenance()
-    await executeOperation("finalizeMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Enviado para Garantia", motivoGarantia: "Defeito persistente após os testes de bancada" }], tech)
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Separado para garantia", motivoGarantia: "Defeito persistente após os testes de bancada" }], tech)
+    const prepared = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("sendWarranty", [id, prepared.garantia.id], tech)
     const sent = (await db.collection("equipments").doc(id).get()).data()!
     await expect(executeOperation("returnWarranty", [id, { ...equipment, numeroRemota: "JA-EXISTE", situacaoRemota: "Recuperada", garantiaId: sent.garantia.id, observacoesRetorno: "Retorno com número já cadastrado" }], admin)).rejects.toThrow("Já existe")
     expect((await db.collection("equipments").doc(id).get()).data()?.garantia.status).toBe("enviada")
@@ -206,6 +208,79 @@ describe("regras do Firestore para o cliente", () => {
       await terminate(store)
       await deleteClientApp(app)
     }
+  })
+})
+
+describe("separação, saída física e cancelamento da garantia", () => {
+  async function prepare() {
+    const { id, maintenanceId } = await openMaintenance()
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Separado para garantia", motivoGarantia: "Defeito persistente após os testes de bancada" }], tech)
+    const current = (await db.collection("equipments").doc(id).get()).data()!
+    return { id, maintenanceId, warrantyId: current.garantia.id as string }
+  }
+  it("separa após avaliação e confirma a saída em outro registro, sem duplicar manutenção", async () => {
+    const { id, maintenanceId, warrantyId } = await prepare()
+    const warranty = db.collection("warranties").doc(warrantyId)
+    expect((await warranty.get()).data()).toMatchObject({ status: "separada", maintenanceId, separadaPor: tech.nome })
+    expect((await warranty.get()).data()?.enviadaEm).toBeUndefined()
+    await expect(executeOperation("returnWarranty", [id, { ...equipment, garantiaId: warrantyId, situacaoRemota: "Recuperada", observacoesRetorno: "Retorno ainda não enviado" }], admin)).rejects.toThrow("Não há envio")
+    const history = await executeOperation("getWarrantyHistory", [id], viewer) as { status: string; enviadaEm?: string }[]
+    expect(history[0]).toMatchObject({ status: "separada" })
+    expect(history[0].enviadaEm).toBeUndefined()
+    await executeOperation("sendWarranty", [id, warrantyId], tech)
+    expect((await warranty.get()).data()).toMatchObject({ status: "enviada", maintenanceId, enviadaPor: tech.nome })
+    expect((await warranty.get()).data()?.enviadaEm.toMillis()).toBeGreaterThanOrEqual((await warranty.get()).data()?.separadaEm.toMillis())
+    expect((await db.collection("maintenances").get()).size).toBe(1)
+    expect((await db.collection("equipments").doc(id).get()).data()?.situacaoRemota).toBe("Enviado para Garantia")
+    const events = (await db.collection("equipment_situation_history").where("equipmentId", "==", id).get()).docs.map((doc) => doc.data().source)
+    expect(events).toContain("warranty_sent")
+    await expect(executeOperation("sendWarranty", [id, warrantyId], tech)).rejects.toThrow("separação pendente")
+  })
+  it("bloqueia edição, importação via cadastro, arquivamento e nova manutenção na separação pendente", async () => {
+    const { id, warrantyId } = await prepare()
+    for (const [operation, args] of [
+      ["updateEquipment", [id, { modelo: "Outro modelo" }]], ["updateEquipmentSituationManual", [id, { situacaoRemota: "Recuperada" }]],
+      ["archiveEquipment", [id]], ["deleteEquipment", [id]], ["createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }]],
+    ] as const) await expect(executeOperation(operation, [...args], admin)).rejects.toThrow("separação")
+    await expect(executeOperation("sendWarranty", [id, warrantyId], viewer)).rejects.toThrow("técnicos")
+    await expect(executeOperation("cancelWarrantyPreparation", [id, warrantyId, "Cancelamento autorizado para reavaliação"], viewer)).rejects.toThrow("técnicos")
+  })
+  it("cancela com justificativa, retorna a Triagem e rejeita o procedimento antigo após nova avaliação", async () => {
+    const { id, warrantyId } = await prepare()
+    await expect(executeOperation("cancelWarrantyPreparation", [id, warrantyId, "curto"], tech)).rejects.toThrow("10 caracteres")
+    await executeOperation("cancelWarrantyPreparation", [id, warrantyId, "Equipamento precisa de nova avaliação interna"], admin)
+    expect((await db.collection("equipments").doc(id).get()).data()).toMatchObject({ situacaoRemota: "Triagem", garantia: { status: "cancelada" } })
+    expect((await db.collection("warranties").doc(warrantyId).get()).data()).toMatchObject({ status: "cancelada", motivoCancelamento: "Equipamento precisa de nova avaliação interna", canceladaPor: admin.nome })
+    const maintenanceId = await executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech)
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Separado para garantia", motivoGarantia: "Nova avaliação confirmou defeito persistente" }], tech)
+    await expect(executeOperation("sendWarranty", [id, warrantyId], tech)).rejects.toThrow("separação pendente")
+    const current = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("sendWarranty", [id, current.garantia.id], admin)
+    expect((await db.collection("warranties").get()).size).toBe(2)
+  })
+  it.each([false, true])("resolve confirmações concorrentes sem duplicidade; concorrência com cancelamento=%s", async (cancel) => {
+    const { id, warrantyId } = await prepare()
+    const outcomes = await Promise.allSettled([
+      executeOperation("sendWarranty", [id, warrantyId], tech),
+      executeOperation(cancel ? "cancelWarrantyPreparation" : "sendWarranty", cancel ? [id, warrantyId, "Reavaliar equipamento antes de enviar"] : [id, warrantyId], admin),
+    ])
+    expect(outcomes.filter((item) => item.status === "fulfilled")).toHaveLength(1)
+    const sent = await db.collection("audit_logs").where("equipmentId", "==", id).where("action", "==", "warranty_sent").get()
+    const cancelled = await db.collection("audit_logs").where("equipmentId", "==", id).where("action", "==", "warranty_preparation_cancelled").get()
+    expect(sent.size + cancelled.size).toBe(1)
+  })
+  it("recusa separação avulsa e registro legado sem avaliação, permitindo reavaliar pelo atendimento", async () => {
+    await expect(executeOperation("createEquipment", [{ ...equipment, situacaoRemota: "Separado para garantia" }], admin)).rejects.toThrow("avaliação")
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    await expect(executeOperation("updateEquipment", [id, { situacaoRemota: "Separado para garantia" }], admin)).rejects.toThrow("avaliação")
+    await db.collection("equipments").doc(id).update({ situacaoRemota: "Separado para garantia" })
+    await expect(executeOperation("sendWarranty", [id, "avulsa"], admin)).rejects.toThrow("separação pendente")
+    await executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech)
+  })
+  it("processa confirmação e cancelamento em massa com falhas individuais", async () => {
+    const { id, warrantyId } = await prepare()
+    const results = await executeOperation("bulkMovements", [[{ operation: "sendWarranty", args: [id, "outro-id"] }, { operation: "sendWarranty", args: [id, warrantyId] }, { operation: "cancelWarrantyPreparation", args: [id, warrantyId, "Cancelamento após saída não permitido"] }]], tech) as { ok: boolean }[]
+    expect(results.map((row) => row.ok)).toEqual([false, true, false])
   })
 })
 

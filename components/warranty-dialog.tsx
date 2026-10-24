@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Spinner } from "@/components/ui/spinner"
 import { returnWarranty } from "@/lib/services"
-import { isMaintenanceSituation, isWarrantySentSituation } from "@/lib/validation"
+import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
 import type { Equipment, EquipmentSituation, Operator } from "@/lib/types"
 
 export function WarrantyDialog({ equipment, situations, operators, onClose }: {
@@ -27,7 +27,7 @@ export function WarrantyDialog({ equipment, situations, operators, onClose }: {
   const [ocm, setOcm] = useState(equipment.lote)
   const [operator, setOperator] = useState(equipment.operadoraAtual)
   const [status, setStatus] = useState<Equipment["status"]>("Usada")
-  const choices = situations.filter((item) => item.ativo && !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome) && (status === "Nova" ? item.nome === "Nova" : item.nome !== "Nova"))
+  const choices = situations.filter((item) => item.ativo && !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome) && (status === "Nova" ? item.nome === "Nova" : item.nome !== "Nova"))
   const [notes, setNotes] = useState(equipment.observacoes || "")
   if (!openedWarranty || openedWarranty.status !== "enviada") return null
   const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -53,7 +53,7 @@ export function WarrantyDialog({ equipment, situations, operators, onClose }: {
       <form onSubmit={submit} className="space-y-4">
         {stale && <p role="alert" className="rounded-lg border border-warning/40 p-3 text-sm">O estado da garantia mudou em outra sessão. Feche e abra o cadastro novamente.</p>}
         <fieldset disabled={saving || stale} className="space-y-4">
-            <p className="rounded-lg bg-muted/40 p-3 text-sm">Enviada em {openedWarranty.enviadaEm.toLocaleDateString("pt-BR")}{openedWarranty.maintenanceId ? " após manutenção." : "."}</p>
+            <p className="rounded-lg bg-muted/40 p-3 text-sm">Enviada em {openedWarranty.enviadaEm?.toLocaleDateString("pt-BR") || "data não informada"}{openedWarranty.maintenanceId ? " após manutenção." : "."}</p>
             <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={changed} onChange={(event) => { setChanged(event.target.checked); if (!event.target.checked) { setStatus("Usada"); setSituation("") } }} />O número/IMEI mudou na garantia</label>
             {changed && <div className="space-y-2 rounded-lg border border-primary/30 p-3">
               <label className="block space-y-1 text-sm">Novo número/IMEI *<Input required value={number} maxLength={100} onChange={(event) => setNumber(event.target.value)} /></label>

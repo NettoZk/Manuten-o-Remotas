@@ -23,6 +23,14 @@ for (const [index, numeroRemota] of ["1001", "1002", "1003"].entries()) {
 }
 if (process.argv.includes("--e2e")) {
   const batch = db.batch()
+  for (const number of ["E2E-SEP-ENVIO-A", "E2E-SEP-ENVIO-B", "E2E-SEP-CANCEL-A", "E2E-SEP-CANCEL-B", "E2E-SEP-CANCEL-IND"]) {
+    const at = Timestamp.now()
+    const warrantyId = `garantia-${number}`
+    const maintenanceId = `avaliacao-${number}`
+    batch.set(db.collection("equipments").doc(number), { numeroRemota: number, modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Separado para garantia", estadoRegistro: "ativo", dataCadastro: at, garantia: { id: warrantyId, status: "separada", separadaEm: at, motivo: "Falha persistente após avaliação de bancada", maintenanceId } })
+    batch.set(db.collection("maintenances").doc(maintenanceId), { equipmentId: number, numeroRemota: number, tecnicoId: "local-tech", tecnicoNome: "Técnico de testes", status: "finalizada", dataEntrada: at, dataFinalizacao: at, situacaoRemota: "Separado para garantia", defeitoRelatado: "Sem comunicação", defeitoEncontrado: "Sem comunicação", servicosRealizados: ["Atualização de firmware"], operadoraAntes: "Claro", operadoraDepois: "Claro", motivoGarantia: "Falha persistente após avaliação de bancada", observacoes: "", checklist: { leituraSIMCard: "OK", firmwareAtualizado: "OK", sinal: "Falha", apnEnergiza: "OK", comunicacaoMedidor: "Falha", comunicacaoIRIS: "Falha" } })
+    batch.set(db.collection("warranties").doc(warrantyId), { equipmentId: number, equipmentIds: [number], numeroRemota: number, status: "separada", separadaEm: at, separadaPor: "Técnico de testes", motivo: "Falha persistente após avaliação de bancada", maintenanceId })
+  }
   for (const number of ["E2E-BULK-A", "E2E-BULK-B", "E2E-BULK-C", "E2E-BULK-D"]) batch.set(db.collection("equipments").doc(number), { numeroRemota: number, modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Triagem", estadoRegistro: "ativo", dataCadastro: Timestamp.now() })
   for (const number of ["E2E-RET-MESMO", "E2E-RET-NOVO"]) {
     const warrantyId = `garantia-${number}`

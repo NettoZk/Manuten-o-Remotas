@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import bcrypt from "bcryptjs"
 import { FieldValue, Timestamp, type Transaction } from "firebase-admin/firestore"
 import { z } from "zod"
-import { cleanUndefined, equipmentSchema, finalizationSchema, isMaintenanceSituation, isWarrantySentSituation, passwordSchema, roleSchema, userSchema, warrantyReturnSchema } from "@/lib/validation"
+import { cleanUndefined, equipmentSchema, finalizationSchema, isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, passwordSchema, roleSchema, userSchema, warrantyReturnSchema } from "@/lib/validation"
 import { getAdmin } from "./firebase-admin"
 import { HttpError, type requireUser } from "./http"
 import { getEquipmentSituationReport, recordEquipmentSituation } from "./equipment-situation-history"
@@ -29,14 +29,12 @@ async function activeName(tx: Transaction, collection: ReferenceCollection, valu
   if (snapshot.empty) throw new HttpError(400, `Valor indisponível na lista: ${value}`)
 }
 
-function registerWarranty(tx: Transaction, actor: Actor, equipmentId: string, numeroRemota: string, maintenanceId: string, data: { situacaoRemota: string; motivo: string }) {
+function prepareWarranty(tx: Transaction, actor: Actor, equipmentId: string, numeroRemota: string, maintenanceId: string, motivo: string, at: Timestamp) {
   const { db } = getAdmin()
   const ref = db.collection("warranties").doc()
-  const enviadaEm = Timestamp.now()
-  const garantia = { id: ref.id, status: "enviada", enviadaEm, motivo: data.motivo, maintenanceId }
-  tx.create(ref, { equipmentId, numeroRemota, equipmentIds: [equipmentId], status: "enviada", enviadaEm, enviadaPor: actor.nome, enviadaUserId: actor.id,
-    motivo: data.motivo, maintenanceId, situacaoEnvio: data.situacaoRemota })
-  audit(tx, actor, "warranty_sent", equipmentId, { warrantyId: ref.id, numeroRemota, motivo: data.motivo, maintenanceId })
+  const garantia = { id: ref.id, status: "separada", separadaEm: at, motivo, maintenanceId }
+  tx.create(ref, { equipmentId, numeroRemota, equipmentIds: [equipmentId], status: "separada", separadaEm: at, separadaPor: actor.nome, separadaUserId: actor.id, motivo, maintenanceId })
+  audit(tx, actor, "warranty_prepared", equipmentId, { warrantyId: ref.id, numeroRemota, motivo, maintenanceId })
   return garantia
 }
 
@@ -77,11 +75,44 @@ export async function executeOperation(operation: string, args: unknown[], actor
       const records = await db.collection("warranties").where("equipmentIds", "array-contains", ref.id).get()
       return records.docs.map((doc) => {
         const data = doc.data()
-        return { ...data, id: doc.id, enviadaEm: data.enviadaEm.toDate().toISOString(), retornadaEm: data.retornadaEm?.toDate().toISOString() }
-      }).sort((a, b) => b.enviadaEm.localeCompare(a.enviadaEm))
+        return { ...data, id: doc.id, separadaEm: data.separadaEm?.toDate().toISOString(), enviadaEm: data.enviadaEm?.toDate().toISOString(), retornadaEm: data.retornadaEm?.toDate().toISOString(), canceladaEm: data.canceladaEm?.toDate().toISOString() }
+      }).sort((a, b) => (b.separadaEm || b.enviadaEm || "").localeCompare(a.separadaEm || a.enviadaEm || ""))
     }
-    case "sendWarranty": {
-      throw new HttpError(409, "O envio para garantia deve ser registrado na conclusão de uma manutenção em andamento")
+    case "sendWarranty":
+    case "cancelWarrantyPreparation": {
+      technician(actor)
+      const ref = equipmentRef(args[0])
+      const warrantyRef = db.collection("warranties").doc(id.parse(args[1]))
+      const cancel = operation === "cancelWarrantyPreparation"
+      const reason = cancel ? z.string().trim().min(10, "Descreva o motivo do cancelamento com pelo menos 10 caracteres").max(2000).parse(args[2]) : ""
+      await db.runTransaction(async (tx) => {
+        const [equipment, warranty] = await Promise.all([tx.get(ref), tx.get(warrantyRef)])
+        const current = equipment.data()
+        const preparation = warranty.data()
+        if (!current || current.estadoRegistro === "inativo") throw new HttpError(404, "Equipamento indisponível")
+        if (current.garantia?.id !== warrantyRef.id || current.garantia?.status !== "separada" || preparation?.status !== "separada" || preparation.equipmentId !== ref.id || !isWarrantySeparatedSituation(current.situacaoRemota || "")) throw new HttpError(409, "Não há separação pendente vinculada a uma avaliação. Consulte o cadastro novamente")
+        if (current.manutencaoId || current.emManutencaoPor) throw new HttpError(409, "Esta remota está em manutenção")
+        const maintenanceId = id.parse(preparation.maintenanceId)
+        const maintenance = await tx.get(db.collection("maintenances").doc(maintenanceId))
+        const evaluation = maintenance.data()
+        if (!evaluation || evaluation.equipmentId !== ref.id || evaluation.status !== "finalizada" || evaluation.finalizadoForcadamente || !isWarrantySeparatedSituation(evaluation.situacaoRemota || "") || current.garantia.maintenanceId !== maintenanceId) throw new HttpError(409, "A separação não possui uma avaliação técnica válida vinculada")
+        let situation = "Triagem"
+        if (cancel) await activeName(tx, "equipment_status", situation)
+        else {
+          const situations = await tx.get(db.collection("equipment_status").where("ativo", "==", true))
+          const names = situations.docs.map((doc) => String(doc.data().nome || "")).filter(isWarrantySentSituation)
+          situation = names.includes("Enviado para Garantia") ? "Enviado para Garantia" : names[0]
+          if (!situation) throw new HttpError(400, "Cadastre uma situação ativa de envio para garantia nas Listas")
+        }
+        const now = Timestamp.now()
+        const status = cancel ? "cancelada" : "enviada"
+        const dates = cancel ? { canceladaEm: now } : { enviadaEm: now }
+        const history = recordEquipmentSituation(tx, ref, current, { ...current, situacaoRemota: situation }, cancel ? "warranty_preparation_cancelled" : "warranty_sent", now)
+        tx.update(warrantyRef, { status, ...dates, ...(cancel ? { canceladaPor: actor.nome, canceladaUserId: actor.id, motivoCancelamento: reason } : { enviadaPor: actor.nome, enviadaUserId: actor.id, situacaoEnvio: situation }) })
+        tx.update(ref, { garantia: { ...current.garantia, status, ...dates }, situacaoAnterior: current.situacaoRemota, situacaoRemota: situation, situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome, motivoAlteracaoSituacao: cancel ? reason : "Confirmação da saída física para garantia", ...history })
+        audit(tx, actor, cancel ? "warranty_preparation_cancelled" : "warranty_sent", ref.id, { warrantyId: warrantyRef.id, maintenanceId, numeroRemota: current.numeroRemota, ...(cancel ? { motivo: reason } : {}) })
+      })
+      return null
     }
     case "returnWarranty": {
       admin(actor)
@@ -178,6 +209,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
       if (actor.tipo !== "admin" && data.situacaoRemota && data.situacaoRemota !== (data.status === "Nova" ? "Nova" : "Triagem")) throw new HttpError(403, "Situação inicial não permitida")
       if (isMaintenanceSituation(data.situacaoRemota || "")) throw new HttpError(400, "Inicie uma manutenção para usar essa situação")
       if (isWarrantySentSituation(data.situacaoRemota || "")) throw new HttpError(400, "O envio para garantia exige a conclusão de uma manutenção")
+      if (isWarrantySeparatedSituation(data.situacaoRemota || "")) throw new HttpError(400, "A separação para garantia exige uma manutenção concluída com avaliação técnica")
       const ref = db.collection("equipments").doc()
       await db.runTransaction(async (tx) => {
         const index = db.collection("equipment_numbers").doc(key(data.numeroRemota))
@@ -208,11 +240,13 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (!current.exists) throw new HttpError(404, "Equipamento não encontrado")
         if (current.data()?.estadoRegistro === "inativo") throw new HttpError(409, "Esta remota está arquivada")
         if (current.data()?.garantia?.status === "enviada") throw new HttpError(409, "Registre o retorno da garantia antes de editar a remota")
+        if (current.data()?.garantia?.status === "separada") throw new HttpError(409, "Confirme o envio ou cancele a separação para garantia antes de editar a remota")
         if (current.data()?.manutencaoId || current.data()?.emManutencaoPor) throw new HttpError(409, "Finalize a manutenção antes de editar o equipamento")
         if (data.situacaoRemota) {
           if (operation === "updateEquipmentSituationManual" && data.situacaoRemota === current.data()?.situacaoRemota) throw new HttpError(409, "A situação selecionada é igual à atual")
           if (isMaintenanceSituation(data.situacaoRemota)) throw new HttpError(400, "Use a abertura de manutenção para esta situação")
           if (isWarrantySentSituation(data.situacaoRemota)) throw new HttpError(400, "O envio para garantia exige a conclusão de uma manutenção")
+          if (isWarrantySeparatedSituation(data.situacaoRemota)) throw new HttpError(400, "A separação para garantia exige a conclusão de uma manutenção com avaliação técnica")
           await activeName(tx, "equipment_status", data.situacaoRemota)
         }
         if ("operadoraAtual" in data && data.operadoraAtual) await activeName(tx, "operators", data.operadoraAtual)
@@ -239,6 +273,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (operation === "archiveEquipment" && equipment.data()?.estadoRegistro === "inativo") throw new HttpError(409, "Esta remota já está arquivada")
         if (equipment.data()?.manutencaoId || equipment.data()?.emManutencaoPor) throw new HttpError(409, "Finalize a manutenção antes de arquivar ou excluir")
         if (equipment.data()?.garantia?.status === "enviada") throw new HttpError(409, "Registre o retorno da garantia antes de arquivar ou excluir")
+        if (equipment.data()?.garantia?.status === "separada") throw new HttpError(409, "Confirme o envio ou cancele a separação para garantia antes de arquivar ou excluir")
         const history = await tx.get(db.collection("maintenances").where("numeroRemota", "==", equipment.data()!.numeroRemota).limit(1))
         const warranties = await tx.get(db.collection("warranties").where("equipmentIds", "array-contains", ref.id).limit(1))
         if (operation === "deleteEquipment" && (!history.empty || !warranties.empty || equipment.data()?.remotaAnteriorId || equipment.data()?.substituidaPorId)) throw new HttpError(409, "Este equipamento tem histórico e deve ser arquivado")
@@ -261,6 +296,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (!eq.exists || eq.data()?.estadoRegistro === "inativo") throw new HttpError(404, "Equipamento indisponível")
         const current = eq.data()!
         if (current.garantia?.status === "enviada") throw new HttpError(409, "Registre o retorno da garantia antes de iniciar uma manutenção")
+        if (current.garantia?.status === "separada") throw new HttpError(409, "Cancele a separação para garantia antes de iniciar outra manutenção")
         // A consulta cobre também registros antigos que não possuam todos os campos de bloqueio.
         const open = await tx.get(db.collection("maintenances").where("numeroRemota", "==", current.numeroRemota))
         if (current.manutencaoId || current.emManutencaoPor || open.docs.some((item) => item.data().status === "em_andamento")) throw new HttpError(409, "Esta remota já está em manutenção. Os dados foram atualizados")
@@ -306,9 +342,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         const now = Timestamp.now()
         const situation = data?.situacaoRemota || "Triagem"
         const history = recordEquipmentSituation(tx, eqRef, equipment, { ...equipment, situacaoRemota: situation }, forced ? "maintenance_forced" : "maintenance_finalized", now)
-        const garantia = isWarrantySentSituation(situation) ? registerWarranty(tx, actor, eq.id, equipment.numeroRemota, ref.id, {
-          situacaoRemota: situation, motivo: data!.motivoGarantia!,
-        }) : undefined
+        const garantia = isWarrantySeparatedSituation(situation) ? prepareWarranty(tx, actor, eq.id, equipment.numeroRemota, ref.id, data!.motivoGarantia!, now) : undefined
         tx.update(ref, { ...(data ? cleanUndefined(data) : { finalizadoForcadamente: true, finalizadoForcadoPor: actor.id, finalizadoForcadoNome: actor.nome, motivoFinalizacaoForcada: reason }),
           situacaoRemota: situation, dataFinalizacao: now, status: "finalizada" })
         tx.update(eqRef, { situacaoAnterior: equipment.situacaoRemota || null, situacaoRemota: situation, situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome,

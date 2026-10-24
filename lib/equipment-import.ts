@@ -1,4 +1,4 @@
-import { equipmentSchema, isWarrantySentSituation } from "./validation"
+import { equipmentSchema, isWarrantySentSituation, isWarrantySeparatedSituation } from "./validation"
 import type { EquipmentStatus } from "./types"
 
 export const equipmentTemplate = [
@@ -24,6 +24,7 @@ export function parseEquipmentRow(row: Record<string, unknown>) {
   for (const [field, label] of Object.entries(fields)) if (!data[field as keyof typeof fields]) errors.push(`${label} é obrigatório`)
   if (data.situacaoRemota === "Manutenção") errors.push("Inicie a manutenção pela tela de manutenção; a importação não cria atendimentos")
   if (isWarrantySentSituation(data.situacaoRemota)) errors.push("O envio para garantia exige a conclusão de uma manutenção")
+  if (isWarrantySeparatedSituation(data.situacaoRemota)) errors.push("A separação para garantia exige uma manutenção concluída com avaliação técnica")
   const parsed = equipmentSchema.safeParse(data)
   if (!parsed.success && !errors.length) errors.push(parsed.error.issues[0].message)
   return { data, errors }

@@ -12,14 +12,14 @@ import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
 import { runBulkMovements } from "@/lib/services"
 import { actionLabels, buildBulkPreview, bulkActions, checklistKeys, checklistLabels, movementHeaders, movementTemplate, type BulkAction, type BulkPreview, type BulkResult } from "@/lib/bulk-movements"
-import { isMaintenanceSituation, isWarrantySentSituation } from "@/lib/validation"
+import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
 import type { Equipment } from "@/lib/types"
 
 export function BulkMovementDialog({ equipments, selectedIds, onClose, onCompleted }: { equipments: Equipment[]; selectedIds: string[]; onClose: () => void; onCompleted: (numbers: string[]) => void }) {
   const live = useLiveData()
   const { hasPermission } = useAuth()
   const isAdmin = hasPermission(["admin"])
-  const actions = bulkActions.filter((action) => isAdmin || action === "iniciar_manutencao" || action === "finalizar_manutencao")
+  const actions = bulkActions.filter((action) => isAdmin || action === "iniciar_manutencao" || action === "finalizar_manutencao" || action === "enviar_garantia" || action === "cancelar_separacao")
   const selected = equipments.filter((item) => selectedIds.includes(item.id))
   const [action, setAction] = useState<BulkAction>(isAdmin ? "alterar_situacao" : "iniciar_manutencao")
   const [mode, setMode] = useState(selectedIds.length ? "common" : "file")
@@ -35,7 +35,7 @@ export function BulkMovementDialog({ equipments, selectedIds, onClose, onComplet
   const valid = preview.filter((item) => item.command)
   function update(key: string, value: string) { setFields((old) => ({ ...old, [key]: value })); setPreview([]); setOutcomes([]) }
   const choices = live.situations.filter((item) => item.ativo && !isMaintenanceSituation(item.nome)
-    && (action === "finalizar_manutencao" || !isWarrantySentSituation(item.nome))
+    && !isWarrantySentSituation(item.nome) && (action === "finalizar_manutencao" || !isWarrantySeparatedSituation(item.nome))
     && (action !== "retornar_garantia" || (fields.condicaoRetorno === "Nova" ? item.nome === "Nova" : item.nome !== "Nova")))
   const defects = [...new Set([...live.defects.filter((item) => item.ativo).map((item) => item.nome), "Outro"])]
   const services = [...new Set([...live.services.filter((item) => item.ativo).map((item) => item.nome), "Outro"])]
@@ -116,7 +116,7 @@ export function BulkMovementDialog({ equipments, selectedIds, onClose, onComplet
             {(fields.servicosRealizados || "").split(";").includes("Outro") && text("Descreva o serviço realizado", "servicosRealizadosOutro", true)}
             <div className="grid gap-3 sm:grid-cols-2">{checklistKeys.map((key, index) => <div key={key}>{choice(checklistLabels[index], key, ["Não testado", "OK", "Falha"])}</div>)}</div>
             {choice("Situação após manutenção", "situacaoRemota", choices.map((item) => item.nome))}
-            {isWarrantySentSituation(fields.situacaoRemota || "") && text("Motivo do envio para garantia (mínimo 10 caracteres)", "motivoGarantia", true)}
+            {isWarrantySeparatedSituation(fields.situacaoRemota || "") && text("Motivo da separação para garantia (mínimo 10 caracteres)", "motivoGarantia", true)}
             {text("Observações da manutenção", "observacoes", true)}
           </>}
           {action === "retornar_garantia" && <>
@@ -127,6 +127,8 @@ export function BulkMovementDialog({ equipments, selectedIds, onClose, onComplet
             <div className="grid gap-3 sm:grid-cols-2">{text("Modelo recebido (opcional)", "modelo")}{text("Ano de fabricação (opcional)", "anoFabricacao")}{text("OCM (opcional)", "OCM")}{choice("Operadora no retorno (opcional)", "operadoraAtual", live.operators.filter((item) => item.ativo).map((item) => item.nome))}</div>
             {text("Descrição do retorno (mínimo 10 caracteres)", "observacoesRetorno", true)}
           </>}
+          {action === "enviar_garantia" && <p className="rounded-lg border p-3 text-sm">Confirme somente as remotas que estão saindo fisicamente para garantia. A manutenção da separação será usada, sem abrir outro atendimento.</p>}
+          {action === "cancelar_separacao" && <>{text("Motivo do cancelamento (mínimo 10 caracteres)", "motivoCancelamento", true)}<p className="text-sm text-muted-foreground">As remotas serão encaminhadas para Triagem. A avaliação e o cancelamento permanecerão registrados.</p></>}
           {action === "arquivar" && <p className="rounded-lg border p-3 text-sm">Os cadastros válidos serão arquivados e deixarão a operação ativa. Seus vínculos e históricos permanecerão disponíveis.</p>}
         </div>}
         <Button type="button" variant="outline" onClick={() => validate()}>Validar lote</Button>

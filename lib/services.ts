@@ -46,9 +46,12 @@ export async function deleteUser(userId: string) { await operation("deleteUser",
 export async function createEquipment(data: Omit<Equipment, "id" | "dataCadastro">) { return operation<string>("createEquipment", data) }
 export async function getEquipmentSituationReport(month: string) { return operation<EquipmentSituationReport>("getEquipmentSituationReport", month) }
 export async function returnWarranty(equipmentId: string, data: WarrantyReturnInput) { await operation("returnWarranty", equipmentId, data) }
+export async function sendWarranty(equipmentId: string, warrantyId: string) { await operation("sendWarranty", equipmentId, warrantyId) }
+export async function cancelWarrantyPreparation(equipmentId: string, warrantyId: string, reason: string) { await operation("cancelWarrantyPreparation", equipmentId, warrantyId, reason) }
 export async function getWarrantyHistory(equipmentId: string): Promise<Warranty[]> {
-  const records = await operation<(Omit<Warranty, "enviadaEm" | "retornadaEm"> & { enviadaEm: string; retornadaEm?: string })[]>("getWarrantyHistory", equipmentId)
-  return records.map((record) => ({ ...record, enviadaEm: new Date(record.enviadaEm), retornadaEm: record.retornadaEm ? new Date(record.retornadaEm) : undefined }))
+  type Dates = "separadaEm" | "enviadaEm" | "retornadaEm" | "canceladaEm"
+  const records = await operation<(Omit<Warranty, Dates> & Partial<Record<Dates, string>>)[]>("getWarrantyHistory", equipmentId)
+  return records.map((record) => ({ ...record, separadaEm: record.separadaEm ? new Date(record.separadaEm) : undefined, enviadaEm: record.enviadaEm ? new Date(record.enviadaEm) : undefined, retornadaEm: record.retornadaEm ? new Date(record.retornadaEm) : undefined, canceladaEm: record.canceladaEm ? new Date(record.canceladaEm) : undefined }))
 }
 export async function getEquipmentByNumber(numeroRemota: string): Promise<Equipment | null> {
   const snapshot = await getDocs(query(collection(db, "equipments"), where("numeroRemota", "==", numeroRemota)))

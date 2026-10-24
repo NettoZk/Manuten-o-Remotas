@@ -1,15 +1,15 @@
 import { z } from "zod"
-import { finalizationSchema, warrantyReturnSchema, isMaintenanceSituation, isWarrantySentSituation } from "./validation"
+import { finalizationSchema, warrantyReturnSchema, isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "./validation"
 import { isWarrantyImeiChangeSituation } from "./equipment-situations"
 import type { Equipment } from "./types"
 
-export const bulkActions = ["alterar_situacao", "iniciar_manutencao", "finalizar_manutencao", "retornar_garantia", "arquivar"] as const
+export const bulkActions = ["alterar_situacao", "iniciar_manutencao", "finalizar_manutencao", "enviar_garantia", "cancelar_separacao", "retornar_garantia", "arquivar"] as const
 export type BulkAction = typeof bulkActions[number]
-export const bulkOperations = ["updateEquipmentSituationManual", "createMaintenance", "finalizeMaintenance", "returnWarranty", "archiveEquipment"] as const
+export const bulkOperations = ["updateEquipmentSituationManual", "createMaintenance", "finalizeMaintenance", "sendWarranty", "cancelWarrantyPreparation", "returnWarranty", "archiveEquipment"] as const
 export interface BulkCommand { number: string; operation: typeof bulkOperations[number]; args: unknown[] }
 export interface BulkResult { ok: boolean; error?: string; result?: unknown }
 export interface BulkPreview { row: number; number: string; command?: BulkCommand; errors: string[] }
-export const actionLabels: Record<BulkAction, string> = { alterar_situacao: "Alterar situação", iniciar_manutencao: "Iniciar manutenção", finalizar_manutencao: "Concluir manutenção / enviar à garantia", retornar_garantia: "Registrar retorno da garantia", arquivar: "Arquivar" }
+export const actionLabels: Record<BulkAction, string> = { alterar_situacao: "Alterar situação", iniciar_manutencao: "Iniciar manutenção", finalizar_manutencao: "Concluir manutenção / separar para garantia", enviar_garantia: "Confirmar envio para garantia", cancelar_separacao: "Cancelar separação para garantia", retornar_garantia: "Registrar retorno da garantia", arquivar: "Arquivar" }
 export const checklistKeys = ["leituraSIMCard", "firmwareAtualizado", "sinal", "apnEnergiza", "comunicacaoMedidor", "comunicacaoIRIS"] as const
 export const checklistLabels = ["Leitura do SIM Card", "Firmware atualizado", "Sinal", "APN Energiza", "Comunicação com medidor", "Comunicação com IRIS"]
 export const movementHeaders: Record<BulkAction, string[]> = {
@@ -18,6 +18,8 @@ export const movementHeaders: Record<BulkAction, string[]> = {
   finalizar_manutencao: ["numeroRemota", "operadoraDepois", "defeitoEncontrado", "defeitoEncontradoOutro", "servicosRealizados", "servicosRealizadosOutro", ...checklistKeys, "situacaoRemota", "motivoGarantia", "observacoes"],
   retornar_garantia: ["numeroRemota", "novoNumeroRemota", "condicaoRetorno", "situacaoRemota", "modelo", "anoFabricacao", "OCM", "operadoraAtual", "observacoesRetorno", "observacoes"],
   arquivar: ["numeroRemota"],
+  enviar_garantia: ["numeroRemota"],
+  cancelar_separacao: ["numeroRemota", "motivoCancelamento"],
 }
 const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").toLowerCase()
 export function buildBulkPreview(action: BulkAction, rows: Record<string, unknown>[], equipments: Equipment[]): BulkPreview[] {
@@ -37,12 +39,13 @@ export function buildBulkPreview(action: BulkAction, rows: Record<string, unknow
       if (equipment.estadoRegistro === "inativo") throw new Error("Esta remota está arquivada")
       const locked = Boolean(equipment.manutencaoId || equipment.emManutencaoPor)
       if (equipment.garantia?.status === "enviada" && action !== "retornar_garantia") throw new Error("Registre o retorno da garantia antes desta movimentação")
+      if (equipment.garantia?.status === "separada" && action !== "enviar_garantia" && action !== "cancelar_separacao") throw new Error("Confirme o envio ou cancele a separação para garantia antes desta movimentação")
       if (action !== "finalizar_manutencao" && locked) throw new Error("Finalize a manutenção em andamento antes desta movimentação")
       let operation: BulkCommand["operation"]
       let args: unknown[]
       if (action === "alterar_situacao") {
         const situation = z.string().trim().min(1, "Informe a situação").max(100).parse(value("situacaoRemota"))
-        if (isMaintenanceSituation(situation) || isWarrantySentSituation(situation) || isWarrantyImeiChangeSituation(situation)) throw new Error("Esta situação exige o procedimento de manutenção ou garantia")
+        if (isMaintenanceSituation(situation) || isWarrantySentSituation(situation) || isWarrantySeparatedSituation(situation) || isWarrantyImeiChangeSituation(situation)) throw new Error("Esta situação exige o procedimento de manutenção ou garantia")
         if (situation === equipment.situacaoRemota) throw new Error("A situação selecionada é igual à atual")
         operation = "updateEquipmentSituationManual"; args = [equipment.id, { situacaoRemota: situation, motivoAlteracaoSituacao: z.string().max(2000).parse(value("motivoAlteracaoSituacao")) }]
       } else if (action === "iniciar_manutencao") {
@@ -55,6 +58,11 @@ export function buildBulkPreview(action: BulkAction, rows: Record<string, unknow
           servicosRealizados: value("servicosRealizados").split(/[;|]/).map((item) => item.trim()).filter(Boolean), servicosRealizadosOutro: value("servicosRealizadosOutro"),
           checklist: Object.fromEntries(checklistKeys.map((key) => [key, value(key)])), situacaoRemota: value("situacaoRemota"), motivoGarantia: value("motivoGarantia"), observacoes: value("observacoes") })
         operation = "finalizeMaintenance"; args = [equipment.manutencaoId, equipment.id, data]
+      } else if (action === "enviar_garantia" || action === "cancelar_separacao") {
+        if (equipment.garantia?.status !== "separada" || !equipment.garantia.maintenanceId || !isWarrantySeparatedSituation(equipment.situacaoRemota || "")) throw new Error("Não há separação pendente vinculada a uma avaliação")
+        operation = action === "enviar_garantia" ? "sendWarranty" : "cancelWarrantyPreparation"
+        args = [equipment.id, equipment.garantia.id]
+        if (action === "cancelar_separacao") args.push(z.string().trim().min(10, "Descreva o motivo do cancelamento com pelo menos 10 caracteres").max(2000).parse(value("motivoCancelamento")))
       } else if (action === "retornar_garantia") {
         if (equipment.garantia?.status !== "enviada") throw new Error("Não há envio para garantia aberto")
         const returnedNumber = value("novoNumeroRemota", "novoIMEI") || number
