@@ -82,7 +82,7 @@ describe("histórico gravado nas transações reais do Firestore", () => {
     await executeOperation("finalizeMaintenance", [maintenanceId, id, finalization], actor)
     expect(await events(id)).toHaveLength(beforeRepeat)
     const sent = (await db.collection("equipments").doc(id).get()).data()!
-    await executeOperation("returnWarranty", [id, { ...data, numeroRemota: "TEST-HIST-002", situacaoRemota: "Recuperada", garantiaId: sent.garantia.id, observacoesRetorno: "Fabricante substituiu o equipamento e informou novo IMEI" }], actor)
+    await executeOperation("returnWarranty", [id, { ...data, status: "Usada", numeroRemota: "TEST-HIST-002", situacaoRemota: "Recuperada", garantiaId: sent.garantia.id, observacoesRetorno: "Fabricante substituiu o equipamento e informou novo IMEI" }], actor)
     const old = (await db.collection("equipments").doc(id).get()).data()!
     expect(old.estadoRegistro).toBe("inativo")
     expect((await events(id)).at(-1)?.active).toBe(false)
@@ -96,7 +96,7 @@ describe("histórico gravado nas transações reais do Firestore", () => {
     const sentAt = Timestamp.now()
     await db.collection("warranties").doc("warranty-test").set({ equipmentId: id, equipmentIds: [id], status: "enviada", enviadaEm: sentAt })
     await db.collection("equipments").doc(id).update({ garantia: { id: "warranty-test", status: "enviada", enviadaEm: sentAt }, situacaoRemota: "Enviado para Garantia" })
-    await executeOperation("returnWarranty", [id, { ...data, situacaoRemota: "Recuperada", garantiaId: "warranty-test", observacoesRetorno: "Equipamento reparado e devolvido com o mesmo IMEI" }], actor)
+    await executeOperation("returnWarranty", [id, { ...data, status: "Usada", situacaoRemota: "Recuperada", garantiaId: "warranty-test", observacoesRetorno: "Equipamento reparado e devolvido com o mesmo IMEI" }], actor)
     expect((await db.collection("equipments").get()).size).toBe(1)
     expect((await events(id)).at(-1)?.source).toBe("warranty_returned")
     expect((await report()).situations).toEqual([{ name: "Recuperada", value: 1 }])

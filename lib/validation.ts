@@ -21,6 +21,9 @@ export const warrantyReturnSchema = equipmentSchema.extend({
   garantiaId: text.max(200).refine((value) => !value.includes("/"), "Identificador inválido"),
   situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value) && !isWarrantySentSituation(value), "Escolha uma situação de retorno fora de manutenção e garantia").refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE),
   observacoesRetorno: text.min(10, "Descreva o retorno com pelo menos 10 caracteres").max(2000),
+}).superRefine((data, ctx) => {
+  if (data.status === "Nova" && data.situacaoRemota !== "Nova") ctx.addIssue({ code: "custom", path: ["situacaoRemota"], message: "Equipamento novo deve retornar com a situação Nova" })
+  if (data.status === "Usada" && data.situacaoRemota === "Nova") ctx.addIssue({ code: "custom", path: ["situacaoRemota"], message: "Equipamento usado deve receber uma situação diferente de Nova" })
 })
 export type WarrantyReturnInput = z.infer<typeof warrantyReturnSchema>
 export const checklistSchema = z.object({

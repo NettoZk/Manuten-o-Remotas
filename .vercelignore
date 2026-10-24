@@ -2,6 +2,8 @@
 node_modules/
 .next/
 .next-local/
+.next-e2e/
+outputs/
 .vercel/
 
 # Arquivos locais, temporários e documentos gerados

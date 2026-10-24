@@ -26,6 +26,7 @@ import { DeleteEquipmentDialog } from "@/components/delete-equipment-dialog"
 import { ImportEquipmentDialog } from "@/components/import-equipment-dialog"
 import { WarrantyDialog } from "@/components/warranty-dialog"
 import { WarrantyHistory } from "@/components/warranty-history"
+import { BulkMovementDialog } from "@/components/bulk-movement-dialog"
 import { isWarrantySentSituation } from "@/lib/validation"
 import { filterEquipmentRegistration, searchEquipments, type EquipmentRegistrationFilter } from "@/lib/equipment-search"
 import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload, ShieldCheck } from "lucide-react"
@@ -38,6 +39,9 @@ export default function EquipmentsPage() {
   const { user, hasPermission } = useAuth()
   const live = useLiveData()
   const isAdmin = hasPermission(["admin"])
+  const canMove = hasPermission(["admin", "tecnico"])
+  const [movementIds, setMovementIds] = useState<string[]>([])
+  const [showBulkMovement, setShowBulkMovement] = useState(false)
   
   const equipments = live.equipments
   const loading = live.loading
@@ -221,6 +225,7 @@ export default function EquipmentsPage() {
             {([ ["todas", "Todas"], ["ativas", "Ativas"], ["arquivadas", "Arquivadas"] ] as const).map(([value, label]) => <Button key={value} size="sm" variant={registrationFilter === value ? "default" : "outline"} aria-pressed={registrationFilter === value} onClick={() => setRegistrationFilter(value)}>{label} ({filterEquipmentRegistration(matches, value).length})</Button>)}
           </div>
           <p className="mb-4 text-xs text-muted-foreground">A busca inclui cadastros arquivados e vínculos de substituição. Use os filtros para consultar somente ativas ou arquivadas.</p>
+          {canMove && <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border p-3"><span className="text-sm">{movementIds.length} remota(s) selecionada(s)</span><Button type="button" variant="outline" onClick={() => setShowBulkMovement(true)}>Movimentação em massa</Button>{!!movementIds.length && <Button type="button" variant="ghost" onClick={() => setMovementIds([])}>Limpar seleção</Button>}</div>}
 
           {filteredEquipments.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
@@ -231,6 +236,7 @@ export default function EquipmentsPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b text-left">
+                    {canMove && <th className="pb-3 pr-3"><input type="checkbox" aria-label="Selecionar remotas ativas deste filtro" checked={filteredEquipments.some((item) => item.estadoRegistro !== "inativo") && filteredEquipments.filter((item) => item.estadoRegistro !== "inativo").every((item) => movementIds.includes(item.id))} onChange={(event) => { const ids = filteredEquipments.filter((item) => item.estadoRegistro !== "inativo").map((item) => item.id); setMovementIds((old) => event.target.checked ? [...new Set([...old, ...ids])] : old.filter((id) => !ids.includes(id))) }} /></th>}
                     <th className="pb-3 font-medium">Número</th>
                     <th className="pb-3 font-medium">Modelo</th>
                     <th className="pb-3 font-medium">Ano</th>
@@ -245,6 +251,7 @@ export default function EquipmentsPage() {
                 <tbody>
                   {filteredEquipments.map((equipment) => (
                     <tr key={equipment.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                      {canMove && <td className="py-3 pr-3"><input type="checkbox" aria-label={`Selecionar remota ${equipment.numeroRemota}`} disabled={equipment.estadoRegistro === "inativo"} checked={movementIds.includes(equipment.id)} onChange={(event) => setMovementIds((old) => event.target.checked ? [...new Set([...old, equipment.id])] : old.filter((id) => id !== equipment.id))} /></td>}
                       <td className="py-3 font-medium"><button className="text-left hover:underline" aria-label={`Ver remota ${equipment.numeroRemota}`} onClick={() => handleViewDetails(equipment)}>{equipment.numeroRemota}</button>
                         {equipment.remotaAnteriorNumero && <p className="text-xs font-normal text-muted-foreground">Anterior: {equipment.remotaAnteriorNumero}</p>}
                         {equipment.substituidaPorNumero && <p className="text-xs font-normal text-muted-foreground">Substituta: {equipment.substituidaPorNumero}</p>}
@@ -659,6 +666,7 @@ export default function EquipmentsPage() {
         onImported={handleImportComplete}
       />
       {warrantyEquipment && <WarrantyDialog key={warrantyEquipment.id} equipment={warrantyEquipment} situations={equipmentSituations} operators={live.operators} onClose={() => setWarrantyEquipmentId(null)} />}
+      {showBulkMovement && <BulkMovementDialog equipments={equipments} selectedIds={movementIds} onClose={() => setShowBulkMovement(false)} onCompleted={(numbers) => setMovementIds((old) => old.filter((id) => !equipments.some((item) => item.id === id && numbers.includes(item.numeroRemota))))} />}
     </div>
   )
 }

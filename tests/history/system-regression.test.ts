@@ -208,3 +208,65 @@ describe("regras do Firestore para o cliente", () => {
     }
   })
 })
+
+describe("análise física e condição do retorno de garantia", () => {
+  it.each([
+    [false, "Nova", "Nova", false], [false, "Usada", "Recuperada", true], [false, "Usada", "Nova", false],
+    [true, "Nova", "Nova", true], [true, "Nova", "Recuperada", false], [true, "Usada", "Recuperada", true], [true, "Usada", "Nova", false],
+  ] as const)("IMEI diferente=%s, condição=%s, situação=%s, permitido=%s", async (changed, status, situation, allowed) => {
+    const ref = db.collection("equipments").doc("retorno-qa")
+    await ref.set({ ...equipment, dataCadastro: Timestamp.now(), estadoRegistro: "ativo", garantia: { id: "garantia-qa", status: "enviada", enviadaEm: Timestamp.now() } })
+    await db.collection("warranties").doc("garantia-qa").set({ equipmentId: ref.id, equipmentIds: [ref.id], status: "enviada", enviadaEm: Timestamp.now() })
+    const input = { ...equipment, numeroRemota: changed ? "NOVO-NUMERO-QA" : equipment.numeroRemota, garantiaId: "garantia-qa", status, situacaoRemota: situation, observacoesRetorno: "Equipamento recebido e condição conferida na análise interna" }
+    const operation = executeOperation("returnWarranty", [ref.id, input], admin)
+    if (!allowed) {
+      await expect(operation).rejects.toThrow()
+      expect((await db.collection("warranties").doc("garantia-qa").get()).data()?.status).toBe("enviada")
+      expect((await db.collection("equipments").get()).size).toBe(1)
+    } else {
+      await operation
+      const original = (await ref.get()).data()!
+      const target = changed ? (await db.collection("equipments").doc(original.substituidaPorId).get()).data()! : original
+      expect(target.status).toBe(status)
+      expect(target.situacaoRemota).toBe(situation)
+      expect((await db.collection("warranties").doc("garantia-qa").get()).data()).toMatchObject({ condicaoRetorno: status, imeiAlterado: changed })
+    }
+  })
+})
+
+describe("processamento em massa com as mesmas regras individuais", () => {
+  it("continua as linhas válidas e informa o erro de cada linha impedida", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    const result = await executeOperation("bulkMovements", [[
+      { operation: "updateEquipmentSituationManual", args: [id, { situacaoRemota: "Recuperada" }] },
+      { operation: "archiveEquipment", args: ["nao-existe"] },
+    ]], admin) as { ok: boolean; error?: string }[]
+    expect(result.map((item) => item.ok)).toEqual([true, false])
+    expect(result[1].error).toContain("não encontrado")
+    expect((await db.collection("equipments").doc(id).get()).data()?.situacaoRemota).toBe("Recuperada")
+  })
+  it("preserva permissões por linha e impede execução pelo perfil de consulta", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    const batch = [{ operation: "archiveEquipment", args: [id] }, { operation: "createMaintenance", args: [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }] }]
+    await expect(executeOperation("bulkMovements", [batch], viewer)).rejects.toThrow("técnicos")
+    const result = await executeOperation("bulkMovements", [batch], tech) as { ok: boolean; error?: string }[]
+    expect(result.map((item) => item.ok)).toEqual([false, true])
+    expect(result[0].error).toContain("administradores")
+    expect((await db.collection("equipments").doc(id).get()).data()?.estadoRegistro).toBe("ativo")
+  })
+  it("recusa operações fora da lista, lote recursivo e excesso de linhas antes de gravar", async () => {
+    for (const operation of ["createUser", "bulkMovements"]) await expect(executeOperation("bulkMovements", [[{ operation, args: [] }]], admin)).rejects.toThrow()
+    await expect(executeOperation("bulkMovements", [Array.from({ length: 51 }, () => ({ operation: "archiveEquipment", args: ["ausente"] }))], admin)).rejects.toThrow()
+    expect((await db.collection("equipments").get()).empty).toBe(true)
+  })
+  it("não repete situação nem altera a data de um cadastro já arquivado", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    await expect(executeOperation("updateEquipmentSituationManual", [id, { situacaoRemota: "Triagem" }], admin)).rejects.toThrow("igual")
+    await executeOperation("archiveEquipment", [id], admin)
+    const previous = (await db.collection("equipments").doc(id).get()).data()!.arquivadoEm.toMillis()
+    const result = await executeOperation("bulkMovements", [[{ operation: "archiveEquipment", args: [id] }]], admin) as { ok: boolean; error?: string }[]
+    expect(result[0].ok).toBe(false)
+    expect(result[0].error).toContain("já está arquivada")
+    expect((await db.collection("equipments").doc(id).get()).data()!.arquivadoEm.toMillis()).toBe(previous)
+  })
+})

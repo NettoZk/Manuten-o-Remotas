@@ -1,0 +1,138 @@
+import { test, expect, type Page } from "@playwright/test"
+import * as XLSX from "xlsx"
+
+if (process.env.FIREBASE_PROJECT_ID !== "demo-remotas-tests" || process.env.FIRESTORE_EMULATOR_HOST !== "127.0.0.1:8080" || process.env.FIREBASE_AUTH_EMULATOR_HOST !== "127.0.0.1:9099") throw new Error("Execute npm run test:e2e para testar somente nos emuladores locais")
+async function login(page: Page, username = "teste.admin") {
+  await page.goto("/")
+  await page.getByLabel("Usuario", { exact: true }).fill(username)
+  await page.getByLabel("Senha", { exact: true }).fill("teste123")
+  await page.getByRole("button", { name: "Entrar", exact: true }).click()
+  await expect(page).toHaveURL(/\/dashboard$/)
+  await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible()
+}
+function excel(rows: Record<string, unknown>[]) {
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "Movimentos")
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer
+}
+
+test("dashboard mostra todas as remotas e abre/fecha a tabela, com impressão completa", async ({ page }) => {
+  await login(page)
+  const trigger = page.getByRole("button", { name: "Situações e percentuais", exact: true })
+  const table = page.getByRole("table", { name: "Situações e percentuais das remotas" })
+  await expect(trigger).toHaveAttribute("aria-expanded", "false")
+  await expect(table).not.toBeVisible()
+  await trigger.click()
+  await expect(table).toBeVisible()
+  await expect(table.getByRole("cell", { name: "Triagem", exact: true })).toBeVisible()
+  await trigger.click()
+  await expect(table).not.toBeVisible()
+  await page.emulateMedia({ media: "print" })
+  await expect(table).toBeVisible()
+  await page.emulateMedia({ media: "screen" })
+  await expect(table).not.toBeVisible()
+})
+
+test("consulta vê equipamentos e histórico sem ações administrativas ou movimentos", async ({ page }) => {
+  await login(page, "teste.consulta")
+  await expect(page.getByRole("link", { name: "Usuarios", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Manutencao", exact: true })).toHaveCount(0)
+  await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Importar Planilha" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Movimentação em massa" })).toHaveCount(0)
+})
+
+test("técnico recebe somente as ações em lote permitidas", async ({ page }) => {
+  await login(page, "teste.tecnico")
+  await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
+  await page.getByRole("button", { name: "Movimentação em massa" }).click()
+  const options = await page.getByLabel("Ação do lote").locator("option").allTextContents()
+  expect(options).toEqual(["Iniciar manutenção", "Concluir manutenção / enviar à garantia"])
+})
+
+test("administrador importa o modelo e identifica os mesmos números como atualização", async ({ page }) => {
+  await login(page)
+  await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
+  await page.getByRole("button", { name: "Importar Planilha" }).click()
+  const dialog = page.getByRole("dialog")
+  const downloaded = page.waitForEvent("download")
+  await dialog.getByRole("button", { name: "Baixar Modelo" }).click()
+  const file = await (await downloaded).path()
+  if (!file) throw new Error("Modelo não foi baixado")
+  await dialog.locator('input[type="file"]').setInputFiles(file)
+  await expect(dialog.getByText("Novos: 2", { exact: true })).toBeVisible()
+  await dialog.getByRole("button", { name: "Importar 2 Remota(s)", exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.getByRole("button", { name: "Importar Planilha" }).click()
+  await page.getByRole("dialog").locator('input[type="file"]').setInputFiles(file)
+  await expect(page.getByRole("dialog").getByText(/Atualizar: 2|Existentes: 2/)).toBeVisible()
+})
+
+test("movimenta duas remotas com os mesmos dados e atualiza as linhas sem recarregar", async ({ page }) => {
+  await login(page)
+  await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
+  for (const number of ["E2E-BULK-A", "E2E-BULK-B"]) await page.getByRole("checkbox", { name: `Selecionar remota ${number}`, exact: true }).check()
+  await page.getByRole("button", { name: "Movimentação em massa" }).click()
+  const dialog = page.getByRole("dialog")
+  await dialog.getByLabel("Situação de destino").selectOption("Recuperada")
+  await dialog.getByRole("button", { name: "Validar lote" }).click()
+  await expect(dialog.getByText(/2 válida\(s\)/)).toBeVisible()
+  await dialog.getByRole("button", { name: "Executar 2 movimentação(ões)", exact: true }).click()
+  await expect(dialog.getByText("Resultado: 2 concluída(s) · 0 pendente(s)")).toBeVisible()
+  await dialog.getByRole("button", { name: "Fechar", exact: true }).click()
+  for (const number of ["E2E-BULK-A", "E2E-BULK-B"]) await expect(page.getByRole("row").filter({ has: page.getByRole("button", { name: `Ver remota ${number}`, exact: true }) }).getByText("Recuperada", { exact: true })).toBeVisible()
+})
+
+test("planilha movimenta situações diferentes e informa uma linha impedida", async ({ page }) => {
+  await login(page)
+  await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
+  await page.getByRole("button", { name: "Movimentação em massa" }).click()
+  const dialog = page.getByRole("dialog")
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "movimentos.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: excel([
+    { numeroRemota: "E2E-BULK-C", situacaoRemota: "Recuperada" }, { numeroRemota: "E2E-BULK-D", situacaoRemota: "Sucata" }, { numeroRemota: "E2E-INEXISTENTE", situacaoRemota: "Triagem" },
+  ]) })
+  await expect(dialog.getByText(/2 válida\(s\) · 1 com impedimento/)).toBeVisible()
+  await dialog.getByRole("button", { name: "Executar 2 movimentação(ões)", exact: true }).click()
+  await expect(dialog.getByText("Resultado: 2 concluída(s) · 1 pendente(s)")).toBeVisible()
+  await expect(dialog.getByRole("button", { name: "Baixar resultado" })).toBeEnabled()
+})
+
+test("retorno com o mesmo IMEI força Usada e permite registrar o resultado apurado", async ({ page }) => {
+  await login(page)
+  await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
+  await page.getByRole("row").filter({ hasText: "E2E-RET-MESMO" }).getByTitle("Registrar retorno da garantia").click()
+  const dialog = page.getByRole("dialog")
+  const condition = dialog.getByLabel(/Condição no retorno/)
+  const situation = dialog.getByLabel(/Situação no retorno/)
+  await expect(condition).toHaveValue("Usada")
+  await expect(condition).toBeDisabled()
+  await expect(situation.locator('option[value="Nova"]')).toHaveCount(0)
+  await dialog.getByRole("checkbox", { name: "O número/IMEI mudou na garantia" }).check()
+  await condition.selectOption("Nova")
+  await expect(situation).toHaveValue("Nova")
+  await expect(situation).toBeDisabled()
+  await dialog.getByRole("checkbox", { name: "O número/IMEI mudou na garantia" }).uncheck()
+  await expect(condition).toHaveValue("Usada")
+  await situation.selectOption("Recuperada")
+  await dialog.getByLabel(/Descrição do retorno/).fill("Equipamento reparado e conferido pela equipe interna")
+  await dialog.getByRole("button", { name: "Confirmar retorno" }).click()
+  await expect(dialog).not.toBeVisible()
+})
+
+test("IMEI diferente permite informar equipamento novo, fixa Nova e preserva o vínculo", async ({ page }) => {
+  await login(page)
+  await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
+  await page.getByRole("row").filter({ hasText: "E2E-RET-NOVO" }).getByTitle("Registrar retorno da garantia").click()
+  const dialog = page.getByRole("dialog")
+  await dialog.getByRole("checkbox", { name: "O número/IMEI mudou na garantia" }).check()
+  await dialog.getByLabel(/Novo número\/IMEI/).fill("E2E-NOVA-RECEBIDA")
+  await dialog.getByLabel(/Condição no retorno/).selectOption("Nova")
+  await expect(dialog.getByLabel(/Situação no retorno/)).toHaveValue("Nova")
+  await dialog.getByLabel(/Descrição do retorno/).fill("Equipamento fisicamente novo conferido na análise interna")
+  await dialog.getByRole("button", { name: "Confirmar retorno" }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.getByLabel("Pesquisar remotas").fill("E2E-NOVA-RECEBIDA")
+  const row = page.getByRole("row").filter({ has: page.getByRole("button", { name: "Ver remota E2E-NOVA-RECEBIDA", exact: true }) })
+  await expect(row.getByText("Anterior: E2E-RET-NOVO", { exact: true })).toBeVisible()
+  await expect(row.getByText("Nova", { exact: true })).toHaveCount(2)
+})

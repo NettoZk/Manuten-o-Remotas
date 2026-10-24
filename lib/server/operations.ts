@@ -9,6 +9,7 @@ import { HttpError, type requireUser } from "./http"
 import { getEquipmentSituationReport, recordEquipmentSituation } from "./equipment-situation-history"
 import { monthKey } from "@/lib/dashboard"
 import { isWarrantyImeiChangeSituation, WARRANTY_IMEI_CHANGE_MESSAGE } from "@/lib/equipment-situations"
+import { bulkOperations, type BulkResult } from "@/lib/bulk-movements"
 
 type Actor = Awaited<ReturnType<typeof requireUser>>
 const id = z.string().min(1).max(200).refine((value) => !value.includes("/"), "Identificador inválido")
@@ -43,6 +44,20 @@ export async function executeOperation(operation: string, args: unknown[], actor
   const { db, auth } = getAdmin()
   const equipmentRef = (value: unknown) => db.collection("equipments").doc(id.parse(value))
   switch (operation) {
+    case "bulkMovements": {
+      technician(actor)
+      const entries = z.array(z.object({ operation: z.enum(bulkOperations), args: z.array(z.unknown()).max(6) })).min(1).max(50).parse(args[0])
+      const results: BulkResult[] = []
+      for (const entry of entries) {
+        try { results.push({ ok: true, result: await executeOperation(entry.operation, entry.args, actor) }) }
+        catch (error) {
+          if (error instanceof HttpError) results.push({ ok: false, error: error.message })
+          else if (error instanceof z.ZodError) results.push({ ok: false, error: error.issues[0]?.message || "Dados inválidos" })
+          else { console.error("Falha em movimentação do lote:", error instanceof Error ? error.message : "Erro desconhecido"); results.push({ ok: false, error: "Não foi possível concluir esta movimentação. Consulte o cadastro antes de repetir" }) }
+        }
+      }
+      return results
+    }
     case "getEquipmentSituationReport": {
       const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).refine((value) => value >= "1900-01" && value <= monthKey(new Date()), "Selecione um mês válido até o mês atual").parse(args[0])
       return getEquipmentSituationReport(month)
@@ -81,6 +96,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (current.garantia?.id !== garantiaId || current.garantia?.status !== "enviada" || !warranty.exists || warranty.data()?.status !== "enviada" || warranty.data()?.equipmentId !== ref.id) throw new HttpError(409, "Não há envio para garantia aberto para esta remota. Consulte o cadastro novamente")
         if (current.manutencaoId || current.emManutencaoPor) throw new HttpError(409, "Esta remota está em manutenção")
         const changed = data.numeroRemota !== current.numeroRemota
+        if (!changed && data.status !== "Usada") throw new HttpError(400, "Retorno com o mesmo IMEI deve ter condição Usada")
         const numberRef = db.collection("equipment_numbers").doc(key(data.numeroRemota))
         if (changed) {
           const [reservation, existing] = await Promise.all([tx.get(numberRef), tx.get(db.collection("equipments").where("numeroRemota", "==", data.numeroRemota).limit(1))])
@@ -105,7 +121,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
             situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome, motivoAlteracaoSituacao: observacoesRetorno, ...history })
         }
         tx.update(warrantyRef, { status: "retornada", retornadaEm: now, retornadaPor: actor.nome, retornadaUserId: actor.id,
-          observacoesRetorno, situacaoRetorno: data.situacaoRemota, equipmentIds: changed ? [ref.id, replacement.id] : [ref.id],
+          observacoesRetorno, situacaoRetorno: data.situacaoRemota, condicaoRetorno: data.status, imeiAlterado: changed, equipmentIds: changed ? [ref.id, replacement.id] : [ref.id],
           ...(changed ? { novoEquipmentId: replacement.id, novoNumeroRemota: data.numeroRemota } : {}) })
         audit(tx, actor, "warranty_returned", ref.id, { warrantyId: warrantyRef.id, numeroRemota: current.numeroRemota,
           ...(changed ? { replacementEquipmentId: replacement.id, replacementNumber: data.numeroRemota } : {}), observacoesRetorno })
@@ -194,6 +210,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (current.data()?.garantia?.status === "enviada") throw new HttpError(409, "Registre o retorno da garantia antes de editar a remota")
         if (current.data()?.manutencaoId || current.data()?.emManutencaoPor) throw new HttpError(409, "Finalize a manutenção antes de editar o equipamento")
         if (data.situacaoRemota) {
+          if (operation === "updateEquipmentSituationManual" && data.situacaoRemota === current.data()?.situacaoRemota) throw new HttpError(409, "A situação selecionada é igual à atual")
           if (isMaintenanceSituation(data.situacaoRemota)) throw new HttpError(400, "Use a abertura de manutenção para esta situação")
           if (isWarrantySentSituation(data.situacaoRemota)) throw new HttpError(400, "O envio para garantia exige a conclusão de uma manutenção")
           await activeName(tx, "equipment_status", data.situacaoRemota)
@@ -219,6 +236,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
       await db.runTransaction(async (tx) => {
         const equipment = await tx.get(ref)
         if (!equipment.exists) throw new HttpError(404, "Equipamento não encontrado")
+        if (operation === "archiveEquipment" && equipment.data()?.estadoRegistro === "inativo") throw new HttpError(409, "Esta remota já está arquivada")
         if (equipment.data()?.manutencaoId || equipment.data()?.emManutencaoPor) throw new HttpError(409, "Finalize a manutenção antes de arquivar ou excluir")
         if (equipment.data()?.garantia?.status === "enviada") throw new HttpError(409, "Registre o retorno da garantia antes de arquivar ou excluir")
         const history = await tx.get(db.collection("maintenances").where("numeroRemota", "==", equipment.data()!.numeroRemota).limit(1))

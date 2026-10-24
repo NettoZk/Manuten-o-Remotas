@@ -5,6 +5,32 @@ import { equipmentFromDoc, maintenanceFromDoc } from "./firestore-records"
 import { isWarrantyImeiChangeSituation } from "./equipment-situations"
 import type { Equipment, Maintenance, User, UserRole, Defect, Service, Operator, EquipmentSituation, EquipmentSituationReport, Warranty } from "./types"
 import type { FinalizationInput, WarrantyReturnInput } from "./validation"
+import type { BulkCommand, BulkResult } from "./bulk-movements"
+
+export async function runBulkMovements(commands: BulkCommand[], onProgress?: (done: number) => void): Promise<BulkResult[]> {
+  const results: BulkResult[] = []
+  for (let offset = 0; offset < commands.length;) {
+    const batch: Pick<BulkCommand, "operation" | "args">[] = []
+    while (offset + batch.length < commands.length && batch.length < 20) {
+      const { operation: name, args } = commands[offset + batch.length]
+      const next = { operation: name, args }
+      if (new TextEncoder().encode(JSON.stringify({ args: [[...batch, next]] })).length > 28_000) {
+        if (!batch.length) throw new Error("Uma linha excede o tamanho permitido. Reduza os textos antes de enviar")
+        break
+      }
+      batch.push(next)
+    }
+    try {
+      const result = await operation<BulkResult[]>("bulkMovements", batch)
+      if (!Array.isArray(result) || result.length !== batch.length) throw new Error("O servidor não confirmou todos os resultados. Consulte os cadastros antes de repetir")
+      results.push(...result)
+    }
+    catch (error) { results.push(...batch.map(() => ({ ok: false, error: error instanceof Error ? error.message : "Falha no envio. Consulte os cadastros antes de repetir" }))) }
+    offset += batch.length
+    onProgress?.(offset)
+  }
+  return results
+}
 
 async function operation<T>(name: string, ...args: unknown[]): Promise<T> {
   return (await apiRequest<{ result: T }>(`/api/data/${name}`, { args })).result

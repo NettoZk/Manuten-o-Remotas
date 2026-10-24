@@ -33,7 +33,9 @@ describe("troca de IMEI como vínculo de garantia", () => {
   it("exige uma situação operacional no retorno de garantia", () => {
     const returned = { ...equipment, garantiaId: "garantia-1", observacoesRetorno: "Fabricante devolveu equipamento com novo IMEI", situacaoRemota: obsolete }
     expect(warrantyReturnSchema.safeParse(returned).success).toBe(false)
-    expect(warrantyReturnSchema.safeParse({ ...returned, situacaoRemota: "Recuperada" }).success).toBe(true)
+    expect(warrantyReturnSchema.safeParse({ ...returned, status: "Usada", situacaoRemota: "Recuperada" }).success).toBe(true)
+    expect(warrantyReturnSchema.safeParse({ ...returned, situacaoRemota: "Nova" }).success).toBe(true)
+    expect(warrantyReturnSchema.safeParse({ ...returned, status: "Usada", situacaoRemota: "Nova" }).success).toBe(false)
   })
 
   it("recusa a classificação obsoleta na finalização de manutenção", () => {

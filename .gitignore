@@ -7,6 +7,8 @@ __v0_jsx-dev-runtime.ts
 node_modules/
 .next/
 .next-local/
+.next-e2e/
+outputs/
 .env*.local
 .DS_Store
 .vercel
@@ -20,5 +22,6 @@ test-results/
 playwright-report/
 coverage/
 .local/
+tmp/
 *.tsbuildinfo
 .env*

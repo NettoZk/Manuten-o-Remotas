@@ -91,6 +91,8 @@ export interface Warranty {
   retornadaPor?: string
   observacoesRetorno?: string
   situacaoRetorno?: string
+  condicaoRetorno?: EquipmentStatus
+  imeiAlterado?: boolean
   novoEquipmentId?: string
   novoNumeroRemota?: string
 }

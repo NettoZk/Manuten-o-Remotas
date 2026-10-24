@@ -36,6 +36,7 @@ export function WarrantyHistory({ equipment, onViewLinked }: { equipment: Equipm
         {record.retornadaEm && <>
           <p>Retorno: {record.retornadaEm.toLocaleString("pt-BR")} · {record.retornadaPor}</p>
           <p>Situação no retorno: {record.situacaoRetorno}</p>
+          {record.condicaoRetorno && <p>Condição no retorno: {record.condicaoRetorno}</p>}
           <p>{record.novoNumeroRemota ? `IMEI anterior: ${record.numeroRemota} → Novo IMEI: ${record.novoNumeroRemota}` : "Retorno com o mesmo número/IMEI"}</p>
           <p className="whitespace-pre-wrap">{record.observacoesRetorno}</p>
         </>}

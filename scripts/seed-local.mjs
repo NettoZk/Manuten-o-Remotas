@@ -14,7 +14,7 @@ const senhaHash = await bcrypt.hash("teste123", 10)
 for (const [uid, username, nome, tipo] of [["local-admin", "teste.admin", "Administrador de testes", "admin"], ["local-tech", "teste.tecnico", "Técnico de testes", "tecnico"], ["local-viewer", "teste.consulta", "Consulta de testes", "usuario"]]) {
   await db.collection("users").doc(uid).set({ username, nome, tipo, ativo: true, senhaHash, criadoEm: Timestamp.now() })
 }
-for (const [collection, names] of Object.entries({ operators: ["Claro", "Vivo"], defects: ["Sem comunicação", "Sem defeito"], services: ["Atualização de firmware", "Troca de SIM Card"], equipment_status: ["Nova", "Triagem", "Manutenção", "Disponível", "Irrecuperável", "Enviado para Garantia"] })) {
+for (const [collection, names] of Object.entries({ operators: ["Claro", "Vivo"], defects: ["Sem comunicação", "Sem defeito"], services: ["Atualização de firmware", "Troca de SIM Card"], equipment_status: ["Nova", "Triagem", "Manutenção", "Disponível", "Irrecuperável", "Enviado para Garantia", "Recuperada", "Sucata", "Separado para garantia", "Disponibilizado para estoque", "Disponibilizada para polo"] })) {
   for (const [index, nome] of names.entries()) await db.collection(collection).doc(`local-${index}`).set({ nome, ativo: true })
 }
 for (const [index, numeroRemota] of ["1001", "1002", "1003"].entries()) {
@@ -23,6 +23,13 @@ for (const [index, numeroRemota] of ["1001", "1002", "1003"].entries()) {
 }
 if (process.argv.includes("--e2e")) {
   const batch = db.batch()
+  for (const number of ["E2E-BULK-A", "E2E-BULK-B", "E2E-BULK-C", "E2E-BULK-D"]) batch.set(db.collection("equipments").doc(number), { numeroRemota: number, modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Triagem", estadoRegistro: "ativo", dataCadastro: Timestamp.now() })
+  for (const number of ["E2E-RET-MESMO", "E2E-RET-NOVO"]) {
+    const warrantyId = `garantia-${number}`
+    const at = Timestamp.now()
+    batch.set(db.collection("equipments").doc(number), { numeroRemota: number, modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Enviado para Garantia", estadoRegistro: "ativo", dataCadastro: at, garantia: { id: warrantyId, status: "enviada", enviadaEm: at, motivo: "Defeito observado em bancada" } })
+    batch.set(db.collection("warranties").doc(warrantyId), { equipmentId: number, equipmentIds: [number], numeroRemota: number, status: "enviada", enviadaEm: at, enviadaPor: "Administrador de testes", enviadaUserId: "local-admin", motivo: "Defeito observado em bancada", situacaoEnvio: "Enviado para Garantia" })
+  }
   batch.set(db.collection("equipments").doc("local-e2e"), { numeroRemota: "E2E-1001", modelo: "RT-1000", anoFabricacao: "2024", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Nova", situacaoRemota: "Triagem", estadoRegistro: "ativo", dataCadastro: Timestamp.now() })
   batch.set(db.collection("equipments").doc("local-e2e-garantia"), { numeroRemota: "E2E-GARANTIA-original", modelo: "RT-1000", anoFabricacao: "2024", lote: "OCM-E2E-GARANTIA", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Triagem", estadoRegistro: "ativo", dataCadastro: Timestamp.now() })
   await batch.commit()
