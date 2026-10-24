@@ -1,12 +1,16 @@
 import type { Equipment, EquipmentSituationEvent, EquipmentSituationReport } from "./types"
 import { monthKey } from "./dashboard"
+import { operationalSituation } from "./equipment-situations"
 
 export const UNKNOWN_HISTORY = "Sem histórico no período"
 export const UNKNOWN_SITUATION = "Sem situação registrada"
 
 export function situationCounts(names: string[]) {
   const counts = new Map<string, number>()
-  for (const name of names) counts.set(name, (counts.get(name) || 0) + 1)
+  for (const value of names) {
+    const name = operationalSituation(value) || UNKNOWN_SITUATION
+    counts.set(name, (counts.get(name) || 0) + 1)
+  }
   return [...counts].sort(([a], [b]) => a.localeCompare(b, "pt-BR")).map(([name, value]) => ({ name, value }))
 }
 
@@ -61,8 +65,17 @@ export function equipmentSituationReport(
 }
 
 export function includeSituationCategories(counts: { name: string; value: number }[], categories: { nome: string; ativo: boolean }[]) {
-  const values = new Map(counts.map((item) => [item.name, item.value]))
-  for (const category of categories) if (category.ativo && !values.has(category.nome)) values.set(category.nome, 0)
+  const values = new Map<string, number>()
+  for (const item of counts) {
+    const situation = operationalSituation(item.name)
+    if (!situation && !item.value) continue
+    const name = situation || UNKNOWN_SITUATION
+    values.set(name, (values.get(name) || 0) + item.value)
+  }
+  for (const category of categories) {
+    const name = operationalSituation(category.nome)
+    if (category.ativo && name && !values.has(name)) values.set(name, 0)
+  }
   return [...values].sort(([a], [b]) => a.localeCompare(b, "pt-BR")).map(([name, value]) => ({ name, value }))
 }
 

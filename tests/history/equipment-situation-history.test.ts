@@ -121,4 +121,16 @@ describe("histórico gravado nas transações reais do Firestore", () => {
     expect((await report()).situations).toEqual([{ name: "Triagem", value: 1 }])
     await expect(report("9999-12")).rejects.toThrow("mês válido")
   })
+
+  it("bloqueia o rótulo de troca de IMEI mesmo quando ele já existe nas referências do banco", async () => {
+    const obsolete = "IMEI alterado na garantia"
+    await db.collection("equipment_status").doc("legada-imei").set({ nome: obsolete, ativo: true })
+    const id = await executeOperation("createEquipment", [data], actor) as string
+    await expect(executeOperation("updateEquipmentSituationManual", [id, { situacaoRemota: obsolete }], actor)).rejects.toThrow("A troca de IMEI")
+    await expect(executeOperation("createEquipment", [{ ...data, numeroRemota: "NOVO-INVALIDO", situacaoRemota: obsolete }], actor)).rejects.toThrow("A troca de IMEI")
+    await expect(executeOperation("createEquipmentSituation", [obsolete], actor)).rejects.toThrow("A troca de IMEI")
+    await expect(executeOperation("updateEquipmentSituation", ["ref-1", { nome: obsolete }], actor)).rejects.toThrow("A troca de IMEI")
+    expect(await events(id)).toHaveLength(1)
+    expect((await report()).situations).toEqual([{ name: "Triagem", value: 1 }])
+  })
 })

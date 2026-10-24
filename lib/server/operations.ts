@@ -8,6 +8,7 @@ import { getAdmin } from "./firebase-admin"
 import { HttpError, type requireUser } from "./http"
 import { getEquipmentSituationReport, recordEquipmentSituation } from "./equipment-situation-history"
 import { monthKey } from "@/lib/dashboard"
+import { isWarrantyImeiChangeSituation, WARRANTY_IMEI_CHANGE_MESSAGE } from "@/lib/equipment-situations"
 
 type Actor = Awaited<ReturnType<typeof requireUser>>
 const id = z.string().min(1).max(200).refine((value) => !value.includes("/"), "Identificador inválido")
@@ -21,6 +22,7 @@ function audit(tx: Transaction, actor: Actor, action: string, equipmentId: strin
   tx.create(db.collection("audit_logs").doc(), { action, equipmentId, userId: actor.id, userName: actor.nome, at: Timestamp.now(), ...cleanUndefined(detail) })
 }
 async function activeName(tx: Transaction, collection: ReferenceCollection, value: string) {
+  if (collection === "equipment_status" && isWarrantyImeiChangeSituation(value)) throw new HttpError(400, WARRANTY_IMEI_CHANGE_MESSAGE)
   const { db } = getAdmin()
   const snapshot = await tx.get(db.collection(collection).where("nome", "==", value).where("ativo", "==", true))
   if (snapshot.empty) throw new HttpError(400, `Valor indisponível na lista: ${value}`)
@@ -305,12 +307,13 @@ export async function executeOperation(operation: string, args: unknown[], actor
       if (!match) throw new HttpError(404, "Operação desconhecida")
       admin(actor)
       const collection = ({ Defect: "defects", Service: "services", Operator: "operators", EquipmentSituation: "equipment_status" } as const)[match[2] as "Defect" | "Service" | "Operator" | "EquipmentSituation"]
-      if (match[1] === "create") return (await db.collection(collection).add({ nome: name.parse(args[0]), ativo: true })).id
+      const referenceName = collection === "equipment_status" ? name.refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE) : name
+      if (match[1] === "create") return (await db.collection(collection).add({ nome: referenceName.parse(args[0]), ativo: true })).id
       const ref = db.collection(collection).doc(id.parse(args[0]))
       if (match[1] === "delete") {
         // Preservar referência histórica; o item deixa de estar disponível em novos formulários.
         await ref.update({ ativo: false })
-      } else await ref.update(z.object({ nome: name.optional(), ativo: z.boolean().optional() }).parse(args[1]))
+      } else await ref.update(z.object({ nome: referenceName.optional(), ativo: z.boolean().optional() }).parse(args[1]))
       return null
     }
   }

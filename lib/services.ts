@@ -2,6 +2,7 @@ import { collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "./firebase"
 import { apiRequest } from "./api-client"
 import { equipmentFromDoc, maintenanceFromDoc } from "./firestore-records"
+import { isWarrantyImeiChangeSituation } from "./equipment-situations"
 import type { Equipment, Maintenance, User, UserRole, Defect, Service, Operator, EquipmentSituation, EquipmentSituationReport, Warranty } from "./types"
 import type { FinalizationInput, WarrantyReturnInput } from "./validation"
 
@@ -56,7 +57,7 @@ export function getOperators() { return getReferences<Operator>("operators") }
 export async function createOperator(nome: string) { return operation<string>("createOperator", nome) }
 export async function updateOperator(id: string, data: Partial<Operator>) { await operation("updateOperator", id, data) }
 export async function deleteOperator(id: string) { await operation("deleteOperator", id) }
-export function getEquipmentSituations() { return getReferences<EquipmentSituation>("equipment_status") }
+export async function getEquipmentSituations() { return (await getReferences<EquipmentSituation>("equipment_status")).filter((item) => !isWarrantyImeiChangeSituation(item.nome)) }
 export async function createEquipmentSituation(nome: string) { return operation<string>("createEquipmentSituation", nome) }
 export async function updateEquipmentSituation(id: string, data: Partial<EquipmentSituation>) { await operation("updateEquipmentSituation", id, data) }
 export async function deleteEquipmentSituation(id: string) { await operation("deleteEquipmentSituation", id) }

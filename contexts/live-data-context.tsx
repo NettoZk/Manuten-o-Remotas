@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState } from "react"
 import { collection, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { equipmentFromDoc, maintenanceFromDoc } from "@/lib/firestore-records"
+import { isWarrantyImeiChangeSituation } from "@/lib/equipment-situations"
 import type { Equipment, Maintenance, Defect, Service, Operator, EquipmentSituation } from "@/lib/types"
 
 interface LiveData {
@@ -36,7 +37,7 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }) {
       if (!active) return
       const records = target === "equipments" ? snapshot.docs.map(equipmentFromDoc).sort((a, b) => b.dataCadastro.getTime() - a.dataCadastro.getTime())
         : target === "maintenances" ? snapshot.docs.map(maintenanceFromDoc).sort((a, b) => b.dataEntrada.getTime() - a.dataEntrada.getTime())
-          : snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }))
+          : snapshot.docs.filter((doc) => target !== "situations" || !isWarrantyImeiChangeSituation(String(doc.data().nome || ""))).map((doc) => ({ ...doc.data(), id: doc.id }))
       setData((previous) => ({ ...previous, [target]: records }))
       setLastUpdate(new Date())
       received(source)

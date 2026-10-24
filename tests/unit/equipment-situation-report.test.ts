@@ -110,6 +110,21 @@ describe("situação mensal de todas as remotas", () => {
     expect(result.reduce((total, item) => total + item.value, 0)).toBe(31)
   })
 
+  it("não exibe a troca de IMEI como categoria operacional, mesmo cadastrada e ativa", () => {
+    const result = includeSituationCategories([{ name: "Recuperada", value: 30 }], [
+      { nome: "IMEI alterado na garantia", ativo: true }, { nome: "Recuperada", ativo: true }, { nome: "Triagem", ativo: true },
+    ])
+    expect(result).toEqual([{ name: "Recuperada", value: 30 }, { name: "Triagem", value: 0 }])
+  })
+
+  it("mantém a contagem de cadastros legados com situação não operacional sem inventar outra situação", () => {
+    const current = equipmentSituationReport([equipment("legada", "IMEI alterado na garantia")], [], "2026-12", now)
+    expect(current.totalEquipments).toBe(1)
+    expect(rows(current)).toEqual({ [UNKNOWN_SITUATION]: 1 })
+    const historical = equipmentSituationReport([equipment("legada")], [event("legada", "IMEI alterado na garantia", "2026-10-01T12:00:00Z")], "2026-10", now)
+    expect(rows(historical)).toEqual({ [UNKNOWN_SITUATION]: 1 })
+  })
+
   it("mantém a cor de cada situação entre meses", () => {
     expect(situationColor("Recuperada")).toBe("#3b82f6")
     expect(situationColor("Manutenção")).toBe(situationColor("Manutencao"))

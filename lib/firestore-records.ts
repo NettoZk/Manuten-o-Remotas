@@ -1,5 +1,6 @@
 import type { DocumentData, QueryDocumentSnapshot } from "firebase/firestore"
 import type { Equipment, Maintenance } from "./types"
+import { operationalSituation } from "./equipment-situations"
 
 function date(value: unknown): Date | undefined {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value
@@ -9,7 +10,7 @@ function date(value: unknown): Date | undefined {
 type RecordDoc = Pick<QueryDocumentSnapshot<DocumentData>, "id" | "data">
 export function equipmentFromDoc(doc: RecordDoc): Equipment {
   const data = doc.data()
-  return { ...data, id: doc.id, dataCadastro: date(data.dataCadastro) || new Date(0),
+  return { ...data, id: doc.id, situacaoRemota: operationalSituation(data.situacaoRemota), dataCadastro: date(data.dataCadastro) || new Date(0),
     situacaoAtualizadaEm: date(data.situacaoAtualizadaEm), ultimaEdicaoEm: date(data.ultimaEdicaoEm),
     arquivadoEm: date(data.arquivadoEm), emManutencaoDesde: date(data.emManutencaoDesde),
     garantia: data.garantia ? { ...data.garantia, enviadaEm: date(data.garantia.enviadaEm), retornadaEm: date(data.garantia.retornadaEm) } : undefined,

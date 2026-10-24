@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { isWarrantyImeiChangeSituation, WARRANTY_IMEI_CHANGE_MESSAGE } from "./equipment-situations"
 
 const text = z.string().trim().min(1, "Preencha os campos obrigatórios")
 export const roleSchema = z.enum(["admin", "tecnico", "usuario"])
@@ -14,11 +15,11 @@ export const equipmentSchema = z.object({
   numeroRemota: text.max(100), modelo: text.max(160), anoFabricacao: text.max(20),
   // O nome persistido continua sendo lote; seu significado na interface é OCM.
   lote: text.max(100), operadoraAtual: text.max(100), status: z.enum(["Nova", "Usada"]),
-  situacaoRemota: text.max(100).optional(), observacoes: z.string().trim().max(5000).optional(),
+  situacaoRemota: text.max(100).refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE).optional(), observacoes: z.string().trim().max(5000).optional(),
 })
 export const warrantyReturnSchema = equipmentSchema.extend({
   garantiaId: text.max(200).refine((value) => !value.includes("/"), "Identificador inválido"),
-  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value) && !isWarrantySentSituation(value), "Escolha uma situação de retorno fora de manutenção e garantia"),
+  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value) && !isWarrantySentSituation(value), "Escolha uma situação de retorno fora de manutenção e garantia").refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE),
   observacoesRetorno: text.min(10, "Descreva o retorno com pelo menos 10 caracteres").max(2000),
 })
 export type WarrantyReturnInput = z.infer<typeof warrantyReturnSchema>
@@ -36,7 +37,7 @@ export const finalizationSchema = z.object({
   servicosRealizadosOutro: z.string().trim().max(2000).optional(),
   operadoraDepois: text.max(100), checklist: checklistSchema,
   observacoes: z.string().trim().max(5000),
-  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value), "Escolha uma situação final diferente de Manutenção"),
+  situacaoRemota: text.max(100).refine((value) => !isMaintenanceSituation(value), "Escolha uma situação final diferente de Manutenção").refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE),
   motivoGarantia: z.string().trim().max(2000).optional(),
 }).superRefine((data, ctx) => {
   if (isWarrantySentSituation(data.situacaoRemota) && (data.motivoGarantia?.length || 0) < 10) ctx.addIssue({ code: "custom", path: ["motivoGarantia"], message: "Descreva o motivo do envio para garantia com pelo menos 10 caracteres" })
