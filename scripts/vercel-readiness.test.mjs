@@ -8,7 +8,7 @@ import { generateKeyPairSync, verify } from "node:crypto"
 import { runInNewContext } from "node:vm"
 import { spawnSync } from "node:child_process"
 import ts from "typescript"
-import { getApps, deleteApp } from "firebase-admin/app"
+import { getApps, deleteApp, SDK_VERSION } from "firebase-admin/app"
 import { ApiError, readApiResponse } from "../lib/api-response.ts"
 
 test("resposta JSON válida preserva resultado e erros da aplicação", async () => {
@@ -26,22 +26,22 @@ test("JSON truncado, vazio e valores fora do contrato são recusados", async () 
     await assert.rejects(readApiResponse(new Response(text)), (error) => error instanceof ApiError && error.message.includes("resposta vazia ou inválida"))
   }
 })
-test("reproduz ERR_REQUIRE_ESM e carrega o Firebase com a opção da Vercel", () => {
-  const code = "try{require('firebase-admin/auth');console.log('loaded')}catch(e){console.error(e.code);process.exit(1)}"
-  const failed = spawnSync(process.execPath, ["--no-experimental-require-module", "-e", code], { encoding: "utf8", windowsHide: true })
-  assert.equal(failed.status, 1)
-  assert.match(failed.stderr, /ERR_REQUIRE_ESM/)
-  const config = JSON.parse(readFileSync("vercel.json", "utf8"))
-  const success = spawnSync(process.execPath, ["-e", code], { encoding: "utf8", windowsHide: true, env: { ...process.env, NODE_OPTIONS: config.env.NODE_OPTIONS } })
+test("Firebase Auth e Firestore carregam com require(ESM) desabilitado como na Vercel", () => {
+  const code = "require('firebase-admin/auth');require('firebase-admin/firestore');console.log('loaded')"
+  const success = spawnSync(process.execPath, ["--no-experimental-require-module", "-e", code], { encoding: "utf8", windowsHide: true })
   assert.equal(success.status, 0, success.stderr)
   assert.match(success.stdout, /loaded/)
 })
-test("manifestos fixam Node 24 e não dependem de segredo em vercel.json", () => {
+test("manifestos fixam a versão compatível do Firebase Admin e Node 24", () => {
   const pkg = JSON.parse(readFileSync("package.json", "utf8"))
   const lock = JSON.parse(readFileSync("package-lock.json", "utf8"))
   assert.equal(pkg.engines.node, "24.x")
   assert.equal(lock.packages[""].engines.node, pkg.engines.node)
-  assert.deepEqual(JSON.parse(readFileSync("vercel.json", "utf8")).env, { NODE_OPTIONS: "--experimental-require-module" })
+  const installed = SDK_VERSION
+  assert.match(pkg.dependencies["firebase-admin"], /^13\.\d+\.\d+$/)
+  assert.equal(installed, pkg.dependencies["firebase-admin"])
+  assert.equal(lock.packages[""].dependencies["firebase-admin"], installed)
+  assert.equal(lock.packages["node_modules/firebase-admin"].version, installed)
 })
 
 // Executa o módulo real com um ambiente isolado. Nenhum .env ou credencial real é lido.

@@ -2,6 +2,7 @@
   "name": "my-project",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/check-runtime.mjs && next build",
@@ -56,7 +57,7 @@
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.6.0",
     "firebase": "^11.0.0",
-    "firebase-admin": "^14.5.0",
+    "firebase-admin": "13.10.0",
     "input-otp": "1.4.2",
     "lucide-react": "^0.564.0",
     "next": "16.4.3",
