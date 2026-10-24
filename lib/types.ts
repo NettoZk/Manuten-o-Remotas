@@ -17,6 +17,29 @@ export interface EquipmentSituation {
   ativo: boolean
 }
 
+export interface EquipmentSituationEvent {
+  equipmentId: string
+  numeroRemota: string
+  at: Date
+  registeredAt: Date
+  archivedAt?: Date
+  situation: string | null
+  active: boolean
+  version: number
+  source: string
+}
+
+export interface EquipmentSituationReport {
+  month: string
+  isCurrent: boolean
+  totalEquipments: number
+  missingHistory: number
+  situations: { name: string; value: number }[]
+  trackedSince: string | null
+  firstYear: number
+  generatedAt: string
+}
+
 export interface Equipment {
   id: string
   numeroRemota: string

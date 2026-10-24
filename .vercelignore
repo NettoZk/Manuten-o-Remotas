@@ -1,0 +1,41 @@
+# Dependências e builds locais
+node_modules/
+.next/
+.next-local/
+.vercel/
+
+# Arquivos locais, temporários e documentos gerados
+.local/
+output/
+tmp/
+scripts/
+
+# Git e caches
+.git/
+.cache/
+.turbo/
+.firebase/
+
+# Relatórios de testes
+coverage/
+playwright-report/
+test-results/
+
+# Ambientes Python locais
+.venv/
+venv/
+__pycache__/
+
+# Logs
+*.log
+*.log.*
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+# Variáveis e credenciais locais
+.env
+.env.*
+
+# Cache do TypeScript
+*.tsbuildinfo

@@ -21,15 +21,15 @@ export function ReportMonthFilter({ value, onChange, firstYear }: { value: strin
   }
   const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   return <fieldset className="min-w-0 space-y-2">
-    <legend className="text-sm font-medium">Período de conclusão</legend>
+    <legend className="text-sm font-medium">Mês de referência</legend>
     <div className="flex flex-wrap items-end gap-2">
       <label className="min-w-32 flex-1 space-y-1 text-xs text-muted-foreground">Mês
-        <select aria-label="Mês de conclusão" className={selectClass} value={month} onChange={(event) => onChange(`${year}-${event.target.value}`)}>
+        <select aria-label="Mês de referência" className={selectClass} value={month} onChange={(event) => onChange(`${year}-${event.target.value}`)}>
           {months.map((item) => <option key={item.value} value={item.value} disabled={`${year}-${item.value}` > current}>{item.label}</option>)}
         </select>
       </label>
       <label className="w-24 space-y-1 text-xs text-muted-foreground">Ano
-        <select aria-label="Ano de conclusão" className={selectClass} value={year} onChange={(event) => {
+        <select aria-label="Ano de referência" className={selectClass} value={year} onChange={(event) => {
           const next = `${event.target.value}-${month}`
           onChange(next > current ? current : next)
         }}>

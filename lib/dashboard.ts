@@ -12,17 +12,6 @@ export function monthLabel(month: string) {
 export function calculateDashboard(equipments: Equipment[], maintenances: Maintenance[], selectedMonth: string, now = new Date()) {
   const active = equipments.filter((equipment) => equipment.estadoRegistro !== "inativo")
   const completed = maintenances.filter((item) => item.status === "finalizada" && item.dataFinalizacao && monthKey(item.dataFinalizacao) === selectedMonth)
-  const latest = new Map<string, Maintenance>()
-  for (const item of completed) {
-    const key = item.equipmentId || item.numeroRemota
-    const previous = latest.get(key)
-    if (!previous || item.dataFinalizacao!.getTime() > previous.dataFinalizacao!.getTime() || (item.dataFinalizacao!.getTime() === previous.dataFinalizacao!.getTime() && item.id > previous.id)) latest.set(key, item)
-  }
-  const situations = new Map<string, number>()
-  for (const item of latest.values()) {
-    const situation = item.situacaoRemota?.trim() || "Sem situação registrada"
-    situations.set(situation, (situations.get(situation) || 0) + 1)
-  }
   const technicians = new Map<string, number>()
   for (const item of maintenances) technicians.set(item.tecnicoNome || "Desconhecido", (technicians.get(item.tecnicoNome || "Desconhecido") || 0) + 1)
   const [year, month] = monthKey(now).split("-").map(Number)
@@ -34,10 +23,8 @@ export function calculateDashboard(equipments: Equipment[], maintenances: Mainte
   return {
     totalEquipments: active.length, totalMaintenances: maintenances.length,
     inProgress: maintenances.filter((item) => item.status === "em_andamento").length,
-    completedThisMonth: completed.length, uniqueCompleted: latest.size,
-    missingSituation: situations.get("Sem situação registrada") || 0,
+    completedThisMonth: completed.length,
     recentMaintenances: maintenances.slice(0, 5),
-    remotasPorSituacao: [...situations].sort(([a], [b]) => a.localeCompare(b, "pt-BR")).map(([name, value]) => ({ name, value })),
     manutencoesPorTecnico: [...technicians].map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total).slice(0, 10),
     manutencoesPorMes: months,
   }

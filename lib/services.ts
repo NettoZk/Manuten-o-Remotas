@@ -2,7 +2,7 @@ import { collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "./firebase"
 import { apiRequest } from "./api-client"
 import { equipmentFromDoc, maintenanceFromDoc } from "./firestore-records"
-import type { Equipment, Maintenance, User, UserRole, Defect, Service, Operator, EquipmentSituation, Warranty } from "./types"
+import type { Equipment, Maintenance, User, UserRole, Defect, Service, Operator, EquipmentSituation, EquipmentSituationReport, Warranty } from "./types"
 import type { FinalizationInput, WarrantyReturnInput } from "./validation"
 
 async function operation<T>(name: string, ...args: unknown[]): Promise<T> {
@@ -17,6 +17,7 @@ export async function updateUser(userId: string, data: Partial<Pick<User, "nome"
 export async function updateUserPassword(userId: string, password: string) { await operation("updateUserPassword", userId, password) }
 export async function deleteUser(userId: string) { await operation("deleteUser", userId) }
 export async function createEquipment(data: Omit<Equipment, "id" | "dataCadastro">) { return operation<string>("createEquipment", data) }
+export async function getEquipmentSituationReport(month: string) { return operation<EquipmentSituationReport>("getEquipmentSituationReport", month) }
 export async function returnWarranty(equipmentId: string, data: WarrantyReturnInput) { await operation("returnWarranty", equipmentId, data) }
 export async function getWarrantyHistory(equipmentId: string): Promise<Warranty[]> {
   const records = await operation<(Omit<Warranty, "enviadaEm" | "retornadaEm"> & { enviadaEm: string; retornadaEm?: string })[]>("getWarrantyHistory", equipmentId)

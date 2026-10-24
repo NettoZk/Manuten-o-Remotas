@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -9,28 +9,46 @@ import { ReportMonthFilter } from "@/components/report-month-filter"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer } from "recharts"
 import { useLiveData } from "@/contexts/live-data-context"
 import { calculateDashboard, monthKey, monthLabel } from "@/lib/dashboard"
+import { equipmentSituationReport, includeSituationCategories, situationColor } from "@/lib/equipment-situation-report"
+import { getEquipmentSituationReport } from "@/lib/services"
+import type { EquipmentSituationReport } from "@/lib/types"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { Radio, Wrench, CheckCircle, Clock, TrendingUp, RefreshCw, PieChartIcon, BarChart3, Users } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-// Cores vibrantes para os gráficos (otimizadas para tema escuro)
-const COLORS = [
-  "#22c55e", // Verde vibrante
-  "#3b82f6", // Azul vibrante
-  "#f59e0b", // Amarelo/Laranja
-  "#ef4444", // Vermelho
-  "#8b5cf6", // Roxo
-  "#06b6d4", // Ciano
-  "#ec4899", // Rosa
-  "#14b8a6", // Teal
-]
-
 export default function DashboardPage() {
-  const { equipments, maintenances, loading, error, lastUpdate, refresh } = useLiveData()
+  const { equipments, maintenances, situations, loading, error, lastUpdate, refresh } = useLiveData()
   const [selectedMonth, setSelectedMonth] = useState(() => monthKey(new Date()))
+  const [historicalReport, setHistoricalReport] = useState<EquipmentSituationReport | null>(null)
+  const [reportLoading, setReportLoading] = useState(true)
+  const [reportError, setReportError] = useState(false)
+  const [reportRevision, setReportRevision] = useState(0)
+  const isCurrentMonth = selectedMonth === monthKey(new Date())
   const stats = useMemo(() => calculateDashboard(equipments, maintenances, selectedMonth), [equipments, maintenances, selectedMonth])
-  const firstYear = useMemo(() => maintenances.reduce((earliest, item) => item.dataFinalizacao ? Math.min(earliest, Number(monthKey(item.dataFinalizacao).slice(0, 4))) : earliest, Number(monthKey(new Date()).slice(0, 4)) - 6), [maintenances])
+  const currentReport = equipmentSituationReport(equipments, [], monthKey(new Date()))
+  const report = isCurrentMonth ? currentReport : historicalReport?.month === selectedMonth ? historicalReport : null
+  const situationRows = includeSituationCategories(report?.situations || [], situations)
+  const chartSituations = situationRows.filter((item) => item.value > 0)
+  const historicalPending = !isCurrentMonth && (reportLoading || !report)
+  const firstYear = Math.min(historicalReport?.firstYear || Infinity, equipments.reduce((earliest, item) => item.dataCadastro.getTime() > 0 ? Math.min(earliest, Number(monthKey(item.dataCadastro).slice(0, 4))) : earliest, Number(monthKey(new Date()).slice(0, 4)) - 6))
+  useEffect(() => {
+    if (loading || error) return
+    let active = true
+    setReportLoading(true)
+    setReportError(false)
+    // Agrupa importações e mudanças em lote; o gráfico atual já reage ao listener.
+    const timeout = setTimeout(() => {
+      getEquipmentSituationReport(selectedMonth).then((result) => {
+        if (active) setHistoricalReport(result)
+      }).catch(() => {
+        if (active) setReportError(true)
+      }).finally(() => {
+        if (active) setReportLoading(false)
+      })
+    }, 200)
+    return () => { active = false; clearTimeout(timeout) }
+  }, [equipments, selectedMonth, loading, error, reportRevision])
   const refreshing = loading
   const handleRefresh = refresh
   if (error) return <div role="alert" className="rounded-lg border border-destructive/40 p-6">Não foi possível carregar o dashboard. Use “Tentar novamente” para sincronizar.</div>
@@ -47,7 +65,7 @@ export default function DashboardPage() {
     {
       title: "Total de Remotas",
       value: stats?.totalEquipments || 0,
-      description: "Remotas cadastradas no sistema",
+      description: "Remotas ativas atualmente",
       icon: Radio,
       color: "text-primary",
       bgColor: "bg-primary/10",
@@ -146,23 +164,24 @@ export default function DashboardPage() {
                   Remotas por situação — {monthLabel(selectedMonth)}
                 </CardTitle>
                 <CardDescription className="text-sm text-muted-foreground">
-                  Situação da última manutenção concluída no mês, contando cada remota uma vez.
+                  {isCurrentMonth ? "Situação atual de todas as remotas ativas, com ou sem manutenção." : "Situação das remotas ativas no fechamento do mês, conforme o histórico registrado."}
                 </CardDescription>
               </div>
             </div>
             <div className="mt-3 flex flex-wrap items-end gap-3 print:hidden">
               <ReportMonthFilter value={selectedMonth} onChange={setSelectedMonth} firstYear={firstYear} />
-              <Button variant="outline" className="h-10" onClick={() => window.print()} disabled={!stats.uniqueCompleted}>Imprimir relatório</Button>
+              <Button variant="outline" className="h-10" onClick={() => window.print()} disabled={!report?.totalEquipments || historicalPending || (!isCurrentMonth && reportError)}>Imprimir relatório</Button>
             </div>
           </CardHeader>
           <CardContent>
-            {stats?.remotasPorSituacao && stats.remotasPorSituacao.length > 0 ? (
+            {reportError && <div role="alert" className="mb-4 rounded-md border border-destructive/40 p-3 text-sm">Não foi possível sincronizar o histórico. <button className="underline print:hidden" onClick={() => setReportRevision((value) => value + 1)}>Tentar novamente</button></div>}
+            {historicalPending && !reportError ? <div className="flex h-75 items-center justify-center" role="status"><Spinner className="mr-2 h-5 w-5" />Consultando histórico do mês...</div> : chartSituations.length > 0 && (isCurrentMonth || !reportError) ? (
               <div className="h-75">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       isAnimationActive={false}
-                      data={stats.remotasPorSituacao}
+                      data={chartSituations}
                       cx="50%"
                       cy="50%"
                       outerRadius={90}
@@ -172,8 +191,8 @@ export default function DashboardPage() {
                       label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                       labelLine={{ stroke: "#888", strokeWidth: 1 }}
                     >
-                      {stats.remotasPorSituacao.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      {chartSituations.map((item) => (
+                        <Cell key={item.name} fill={situationColor(item.name)} />
                       ))}
                     </Pie>
                     <ChartTooltip
@@ -198,13 +217,16 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="flex h-75 items-center justify-center">
-                <p className="text-sm text-muted-foreground">Nenhuma manutenção concluída no mês selecionado</p>
+                <p className="text-sm text-muted-foreground">{reportError && !isCurrentMonth ? "Histórico indisponível no momento" : "Nenhuma remota ativa no período selecionado"}</p>
               </div>
             )}
-            <p className="mb-3 text-sm font-medium">{stats.uniqueCompleted} remota(s) · {stats.completedThisMonth} manutenção(ões) concluída(s)</p>
-            {stats.uniqueCompleted > 0 && <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Situação final</th><th>Remotas</th><th>Percentual</th></tr></thead><tbody>{stats.remotasPorSituacao.map((item) => <tr key={item.name} className="border-b"><td className="py-2">{item.name}</td><td>{item.value}</td><td>{(item.value / stats.uniqueCompleted * 100).toFixed(1)}%</td></tr>)}</tbody></table>}
-            {stats.missingSituation > 0 && <p className="mt-3 text-xs text-muted-foreground">{stats.missingSituation} remota(s) possuem conclusão antiga sem situação registrada. A situação atual do cadastro não é usada para alterar o passado.</p>}
-            <p className="mt-3 text-xs text-muted-foreground">Período no horário de Brasília. Atendimentos em andamento não entram nesta distribuição.</p>
+            {!historicalPending && (isCurrentMonth || !reportError) && <>
+              <p className="mb-3 text-sm font-medium">{report?.totalEquipments || 0} remota(s) ativa(s) · {isCurrentMonth ? "posição atual" : "posição no fechamento do mês"}</p>
+              <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Situação</th><th>Remotas</th><th>Percentual</th></tr></thead><tbody>{situationRows.map((item) => <tr key={item.name} className="border-b"><td className="py-2"><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: situationColor(item.name) }} />{item.name}</td><td>{item.value}</td><td>{report?.totalEquipments ? (item.value / report.totalEquipments * 100).toFixed(1) : "0.0"}%</td></tr>)}</tbody></table>
+              {!!report?.missingHistory && <p role="note" className="mt-3 text-xs text-muted-foreground">{report.missingHistory} remota(s) não possuem histórico suficiente para determinar a situação neste mês e estão identificadas como “Sem histórico no período”.</p>}
+            </>}
+            <p className="mt-3 text-xs text-muted-foreground">Horário de Brasília. Cada remota é contada uma vez. Manutenções em andamento estão incluídas na situação do equipamento. Cadastros arquivados ficam fora a partir do arquivamento.</p>
+            {historicalReport?.trackedSince && <p className="mt-2 text-xs text-muted-foreground">Acompanhamento registrado desde {format(new Date(historicalReport.trackedSince), "dd/MM/yyyy", { locale: ptBR })}.</p>}
           </CardContent>
         </Card>
 

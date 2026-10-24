@@ -6,6 +6,8 @@ import { z } from "zod"
 import { cleanUndefined, equipmentSchema, finalizationSchema, isMaintenanceSituation, isWarrantySentSituation, passwordSchema, roleSchema, userSchema, warrantyReturnSchema } from "@/lib/validation"
 import { getAdmin } from "./firebase-admin"
 import { HttpError, type requireUser } from "./http"
+import { getEquipmentSituationReport, recordEquipmentSituation } from "./equipment-situation-history"
+import { monthKey } from "@/lib/dashboard"
 
 type Actor = Awaited<ReturnType<typeof requireUser>>
 const id = z.string().min(1).max(200).refine((value) => !value.includes("/"), "Identificador inválido")
@@ -39,6 +41,10 @@ export async function executeOperation(operation: string, args: unknown[], actor
   const { db, auth } = getAdmin()
   const equipmentRef = (value: unknown) => db.collection("equipments").doc(id.parse(value))
   switch (operation) {
+    case "getEquipmentSituationReport": {
+      const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).refine((value) => value >= "1900-01" && value <= monthKey(new Date()), "Selecione um mês válido até o mês atual").parse(args[0])
+      return getEquipmentSituationReport(month)
+    }
     case "getUsers": {
       admin(actor)
       const users = await db.collection("users").get()
@@ -83,14 +89,18 @@ export async function executeOperation(operation: string, args: unknown[], actor
         const now = Timestamp.now()
         const garantia = { ...current.garantia, status: "retornada", retornadaEm: now }
         if (changed) {
+          const replacementData = { ...cleanUndefined(data), estadoRegistro: "ativo", dataCadastro: now,
+            remotaAnteriorId: ref.id, remotaAnteriorNumero: current.numeroRemota, garantiaOrigemId: warrantyRef.id }
+          const replacementHistory = recordEquipmentSituation(tx, replacement, undefined, replacementData, "warranty_replacement_created", now)
+          const previousHistory = recordEquipmentSituation(tx, ref, current, { ...current, estadoRegistro: "inativo", arquivadoEm: now }, "warranty_replaced", now)
           tx.create(numberRef, { equipmentId: replacement.id })
-          tx.create(replacement, { ...cleanUndefined(data), estadoRegistro: "ativo", dataCadastro: now,
-            remotaAnteriorId: ref.id, remotaAnteriorNumero: current.numeroRemota, garantiaOrigemId: warrantyRef.id })
+          tx.create(replacement, { ...replacementData, ...replacementHistory })
           tx.update(ref, { garantia, estadoRegistro: "inativo", arquivadoEm: now, arquivadoPor: actor.nome, arquivadoUserId: actor.id,
-            substituidaPorId: replacement.id, substituidaPorNumero: data.numeroRemota, motivoArquivamento: "Substituída no retorno da garantia" })
+            substituidaPorId: replacement.id, substituidaPorNumero: data.numeroRemota, motivoArquivamento: "Substituída no retorno da garantia", ...previousHistory })
         } else {
+          const history = recordEquipmentSituation(tx, ref, current, { ...current, ...data }, "warranty_returned", now)
           tx.update(ref, { ...cleanUndefined(data), garantia, situacaoAnterior: current.situacaoRemota || null,
-            situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome, motivoAlteracaoSituacao: observacoesRetorno })
+            situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome, motivoAlteracaoSituacao: observacoesRetorno, ...history })
         }
         tx.update(warrantyRef, { status: "retornada", retornadaEm: now, retornadaPor: actor.nome, retornadaUserId: actor.id,
           observacoesRetorno, situacaoRetorno: data.situacaoRemota, equipmentIds: changed ? [ref.id, replacement.id] : [ref.id],
@@ -157,8 +167,11 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (reservation.exists || !existing.empty) throw new HttpError(409, "Já existe uma remota com este número")
         await activeName(tx, "operators", data.operadoraAtual)
         if (data.situacaoRemota) await activeName(tx, "equipment_status", data.situacaoRemota)
+        const now = Timestamp.now()
+        const equipment = { ...cleanUndefined(data), situacaoRemota: data.situacaoRemota || (data.status === "Nova" ? "Nova" : "Triagem"), estadoRegistro: "ativo", dataCadastro: now }
+        const history = recordEquipmentSituation(tx, ref, undefined, equipment, "created", now)
         tx.create(index, { equipmentId: ref.id })
-        tx.create(ref, { ...cleanUndefined(data), situacaoRemota: data.situacaoRemota || (data.status === "Nova" ? "Nova" : "Triagem"), estadoRegistro: "ativo", dataCadastro: Timestamp.now() })
+        tx.create(ref, { ...equipment, ...history })
         audit(tx, actor, "equipment_created", ref.id)
       })
       return ref.id
@@ -184,11 +197,15 @@ export async function executeOperation(operation: string, args: unknown[], actor
           await activeName(tx, "equipment_status", data.situacaoRemota)
         }
         if ("operadoraAtual" in data && data.operadoraAtual) await activeName(tx, "operators", data.operadoraAtual)
-        const situation = data.situacaoRemota && data.situacaoRemota !== current.data()?.situacaoRemota ? {
-          situacaoAnterior: current.data()?.situacaoRemota || null, situacaoAtualizadaEm: Timestamp.now(), situacaoAtualizadaPor: actor.nome,
+        const now = Timestamp.now()
+        const situationChanged = data.situacaoRemota && data.situacaoRemota !== current.data()?.situacaoRemota
+        const history = situationChanged ? recordEquipmentSituation(tx, ref, current.data(), { ...current.data(), ...data }, "situation_changed", now)
+          : !current.data()!.situationHistorySince ? recordEquipmentSituation(tx, ref, current.data(), current.data(), "baseline", now) : {}
+        const situation = situationChanged ? {
+          situacaoAnterior: current.data()?.situacaoRemota || null, situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome,
           motivoAlteracaoSituacao: "motivoAlteracaoSituacao" in data ? data.motivoAlteracaoSituacao || "" : "",
         } : {}
-        tx.update(ref, { ...cleanUndefined(data), ...situation, ultimaEdicaoEm: Timestamp.now(), ultimaEdicaoPor: actor.nome, ultimaEdicaoUserId: actor.id })
+        tx.update(ref, { ...cleanUndefined(data), ...situation, ...history, ultimaEdicaoEm: now, ultimaEdicaoPor: actor.nome, ultimaEdicaoUserId: actor.id })
         audit(tx, actor, "equipment_updated", ref.id, { changes: cleanUndefined(data), previousSituation: current.data()?.situacaoRemota })
       })
       return null
@@ -205,7 +222,9 @@ export async function executeOperation(operation: string, args: unknown[], actor
         const history = await tx.get(db.collection("maintenances").where("numeroRemota", "==", equipment.data()!.numeroRemota).limit(1))
         const warranties = await tx.get(db.collection("warranties").where("equipmentIds", "array-contains", ref.id).limit(1))
         if (operation === "deleteEquipment" && (!history.empty || !warranties.empty || equipment.data()?.remotaAnteriorId || equipment.data()?.substituidaPorId)) throw new HttpError(409, "Este equipamento tem histórico e deve ser arquivado")
-        if (operation === "archiveEquipment") tx.update(ref, { estadoRegistro: "inativo", arquivadoEm: Timestamp.now(), arquivadoPor: actor.nome, arquivadoUserId: actor.id })
+        const now = Timestamp.now()
+        const historyMetadata = recordEquipmentSituation(tx, ref, equipment.data(), operation === "archiveEquipment" ? { ...equipment.data(), estadoRegistro: "inativo", arquivadoEm: now } : undefined, operation === "archiveEquipment" ? "archived" : "deleted", now)
+        if (operation === "archiveEquipment") tx.update(ref, { estadoRegistro: "inativo", arquivadoEm: now, arquivadoPor: actor.nome, arquivadoUserId: actor.id, ...historyMetadata })
         else { tx.delete(ref); tx.delete(db.collection("equipment_numbers").doc(key(equipment.data()!.numeroRemota))) }
         audit(tx, actor, operation === "deleteEquipment" ? "equipment_deleted" : "equipment_archived", ref.id)
       })
@@ -227,13 +246,14 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (current.manutencaoId || current.emManutencaoPor || open.docs.some((item) => item.data().status === "em_andamento")) throw new HttpError(409, "Esta remota já está em manutenção. Os dados foram atualizados")
         if (data.defeitoRelatado !== "Outro") await activeName(tx, "defects", data.defeitoRelatado)
         const now = Timestamp.now()
+        const history = recordEquipmentSituation(tx, eqRef, current, { ...current, situacaoRemota: "Manutenção" }, "maintenance_started", now)
         tx.create(ref, { numeroRemota: current.numeroRemota, equipmentId: eq.id, tecnicoId: actor.id, tecnicoNome: actor.nome,
           dataEntrada: now, dataFinalizacao: null, status: "em_andamento", operadoraAntes: current.operadoraAtual, operadoraDepois: current.operadoraAtual,
           ...cleanUndefined({ defeitoRelatado: data.defeitoRelatado, defeitoRelatadoOutro: data.defeitoRelatadoOutro }),
           defeitoEncontrado: "", servicosRealizados: [], observacoes: "", checklist: { leituraSIMCard: "Não testado", firmwareAtualizado: "Não testado", sinal: "Não testado", apnEnergiza: "Não testado", comunicacaoMedidor: "Não testado", comunicacaoIRIS: "Não testado" },
         })
         tx.update(eqRef, { situacaoAnterior: current.situacaoRemota || null, situacaoRemota: "Manutenção", situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome,
-          emManutencaoPor: actor.id, emManutencaoNome: actor.nome, emManutencaoDesde: now, manutencaoId: ref.id })
+          emManutencaoPor: actor.id, emManutencaoNome: actor.nome, emManutencaoDesde: now, manutencaoId: ref.id, ...history })
         audit(tx, actor, "maintenance_started", eq.id, { maintenanceId: ref.id })
       })
       return ref.id
@@ -265,13 +285,14 @@ export async function executeOperation(operation: string, args: unknown[], actor
         }
         const now = Timestamp.now()
         const situation = data?.situacaoRemota || "Triagem"
+        const history = recordEquipmentSituation(tx, eqRef, equipment, { ...equipment, situacaoRemota: situation }, forced ? "maintenance_forced" : "maintenance_finalized", now)
         const garantia = isWarrantySentSituation(situation) ? registerWarranty(tx, actor, eq.id, equipment.numeroRemota, ref.id, {
           situacaoRemota: situation, motivo: data!.motivoGarantia!,
         }) : undefined
         tx.update(ref, { ...(data ? cleanUndefined(data) : { finalizadoForcadamente: true, finalizadoForcadoPor: actor.id, finalizadoForcadoNome: actor.nome, motivoFinalizacaoForcada: reason }),
           situacaoRemota: situation, dataFinalizacao: now, status: "finalizada" })
         tx.update(eqRef, { situacaoAnterior: equipment.situacaoRemota || null, situacaoRemota: situation, situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome,
-          ...(garantia ? { garantia } : {}),
+          ...(garantia ? { garantia } : {}), ...history,
           motivoAlteracaoSituacao: forced ? `Manutenção finalizada forçadamente: ${reason}` : "Conclusão de manutenção",
           ...(data ? { operadoraAtual: data.operadoraDepois, status: "Usada" } : {}),
           emManutencaoPor: FieldValue.delete(), emManutencaoNome: FieldValue.delete(), emManutencaoDesde: FieldValue.delete(), manutencaoId: FieldValue.delete() })
