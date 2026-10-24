@@ -5,9 +5,12 @@ import { getAuth } from "firebase-admin/auth"
 import { getFirestore } from "firebase-admin/firestore"
 
 function getCredential(projectId: string) {
-  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-    return cert({ projectId, clientEmail: process.env.FIREBASE_CLIENT_EMAIL, privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n") })
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim()
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim()
+  if (clientEmail && privateKey) {
+    return cert({ projectId, clientEmail, privateKey: privateKey.replace(/\\n/g, "\n") })
   }
+  if (process.env.VERCEL === "1" || clientEmail || privateKey) throw new Error("Configure FIREBASE_CLIENT_EMAIL e FIREBASE_PRIVATE_KEY no ambiente do servidor. Na Vercel, não use o caminho local de GOOGLE_APPLICATION_CREDENTIALS.")
   const credentialPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
   if (credentialPath) {
     let type: unknown

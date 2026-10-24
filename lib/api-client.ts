@@ -1,8 +1,6 @@
 import { auth } from "./firebase"
-
-export class ApiError extends Error {
-  constructor(message: string, public status: number) { super(message) }
-}
+import { readApiResponse } from "./api-response"
+export { ApiError } from "./api-response"
 
 export async function apiRequest<T>(path: string, body?: unknown, authenticated = true): Promise<T> {
   const token = authenticated ? await auth.currentUser?.getIdToken() : undefined
@@ -12,7 +10,5 @@ export async function apiRequest<T>(path: string, body?: unknown, authenticated 
     headers: { ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   })
-  const data = await response.json()
-  if (!response.ok) throw new ApiError(data.error || "Não foi possível concluir a operação", response.status)
-  return data as T
+  return readApiResponse<T>(response)
 }

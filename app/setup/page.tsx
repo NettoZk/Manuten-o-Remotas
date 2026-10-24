@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
+import { readApiResponse } from "@/lib/api-response"
 
 export default function SetupPage() {
   const router = useRouter()
@@ -18,8 +19,7 @@ export default function SetupPage() {
   useEffect(() => {
     let active = true
     fetch("/api/setup", { cache: "no-store" }).then(async (response) => {
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error)
+      const data = await readApiResponse<{ configured: boolean; enabled: boolean }>(response)
       if (active) setState(data)
     }).catch(() => { if (active) setError("Não foi possível verificar a configuração do sistema. Contate o administrador.") })
     return () => { active = false }
@@ -30,8 +30,7 @@ export default function SetupPage() {
     setSaving(true)
     try {
       const response = await fetch("/api/setup", { method: "POST", headers: { "Content-Type": "application/json", "X-Setup-Token": form.token }, body: JSON.stringify({ nome: form.nome, username: form.username, password: form.password }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error)
+      await readApiResponse<{ success: boolean }>(response)
       toast.success("Administrador criado com sucesso")
       router.replace("/")
     } catch (error) { toast.error(error instanceof Error ? error.message : "Erro ao configurar o sistema") }

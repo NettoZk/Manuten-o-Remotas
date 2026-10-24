@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/check-runtime.mjs && next build",
+    "check:runtime": "node scripts/check-runtime.mjs",
+    "verify:vercel": "node --test scripts/vercel-readiness.test.mjs",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
@@ -102,6 +104,6 @@
     }
   },
   "engines": {
-    "node": ">=22.18.0"
+    "node": "24.x"
   }
 }
