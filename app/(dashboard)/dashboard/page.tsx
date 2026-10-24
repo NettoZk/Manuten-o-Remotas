@@ -225,8 +225,6 @@ export default function DashboardPage() {
               <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Situação</th><th>Remotas</th><th>Percentual</th></tr></thead><tbody>{situationRows.map((item) => <tr key={item.name} className="border-b"><td className="py-2"><span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: situationColor(item.name) }} />{item.name}</td><td>{item.value}</td><td>{report?.totalEquipments ? (item.value / report.totalEquipments * 100).toFixed(1) : "0.0"}%</td></tr>)}</tbody></table>
               {!!report?.missingHistory && <p role="note" className="mt-3 text-xs text-muted-foreground">{report.missingHistory} remota(s) não possuem histórico suficiente para determinar a situação neste mês e estão identificadas como “Sem histórico no período”.</p>}
             </>}
-            <p className="mt-3 text-xs text-muted-foreground">Horário de Brasília. Cada remota é contada uma vez. Manutenções em andamento estão incluídas na situação do equipamento. Cadastros arquivados ficam fora a partir do arquivamento.</p>
-            {historicalReport?.trackedSince && <p className="mt-2 text-xs text-muted-foreground">Acompanhamento registrado desde {format(new Date(historicalReport.trackedSince), "dd/MM/yyyy", { locale: ptBR })}.</p>}
           </CardContent>
         </Card>
 
