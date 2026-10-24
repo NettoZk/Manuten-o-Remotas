@@ -15,25 +15,32 @@ import { actionLabels, buildBulkPreview, bulkActions, checklistKeys, checklistLa
 import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
 import type { Equipment } from "@/lib/types"
 
-export function BulkMovementDialog({ equipments, selectedIds, onClose, onCompleted }: { equipments: Equipment[]; selectedIds: string[]; onClose: () => void; onCompleted: (numbers: string[]) => void }) {
+export function BulkMovementDialog({ equipments, selectedIds, initialAction, initialSituation, onClose, onCompleted }: { equipments: Equipment[]; selectedIds: string[]; initialAction?: BulkAction; initialSituation?: string; onClose: () => void; onCompleted: (numbers: string[]) => void }) {
   const live = useLiveData()
   const { hasPermission } = useAuth()
   const isAdmin = hasPermission(["admin"])
   const actions = bulkActions.filter((action) => isAdmin || action === "iniciar_manutencao" || action === "finalizar_manutencao" || action === "enviar_garantia" || action === "cancelar_separacao")
   const selected = equipments.filter((item) => selectedIds.includes(item.id))
-  const [action, setAction] = useState<BulkAction>(isAdmin ? "alterar_situacao" : "iniciar_manutencao")
+  const [action, setAction] = useState<BulkAction>(initialAction && actions.includes(initialAction) ? initialAction : isAdmin ? "alterar_situacao" : "iniciar_manutencao")
   const [mode, setMode] = useState(selectedIds.length ? "common" : "file")
-  const [fields, setFields] = useState<Record<string, string>>(() => ({ ...Object.fromEntries(checklistKeys.map((key) => [key, "Não testado"])), condicaoRetorno: "Usada" }))
+  const [fields, setFields] = useState<Record<string, string>>(() => ({ ...Object.fromEntries(checklistKeys.map((key) => [key, "Não testado"])), condicaoRetorno: "Usada", ...(initialSituation ? { situacaoRemota: initialSituation } : {}) }))
   const [newNumbers, setNewNumbers] = useState<Record<string, string>>({})
   const [sheets, setSheets] = useState<Record<string, Record<string, unknown>[]>>({})
   const [sheetName, setSheetName] = useState("")
-  const [preview, setPreview] = useState<BulkPreview[]>([])
+  const [preview, setPreview] = useState<BulkPreview[]>(() => initialAction === "enviar_garantia" && selected.length && selected.length <= 500 ? buildBulkPreview("enviar_garantia", selected.map((item) => ({ numeroRemota: item.numeroRemota })), equipments) : [])
   const [outcomes, setOutcomes] = useState<(BulkResult & { number: string; row: number })[]>([])
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(0)
   const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
   const valid = preview.filter((item) => item.command)
-  function update(key: string, value: string) { setFields((old) => ({ ...old, [key]: value })); setPreview([]); setOutcomes([]) }
+  const directSend = initialAction === "enviar_garantia" && action === "enviar_garantia" && mode === "common"
+  const directCancel = initialAction === "cancelar_separacao" && action === "cancelar_separacao" && mode === "common"
+  const title = directSend ? "Confirmar envio em massa" : directCancel ? "Cancelar separações em massa" : initialAction === "finalizar_manutencao" && action === "finalizar_manutencao" ? "Concluir manutenções em massa" : "Movimentação em massa"
+  function update(key: string, value: string) {
+    setFields((old) => ({ ...old, [key]: value }))
+    setPreview(directCancel && key === "motivoCancelamento" && value.trim().length >= 10 && selected.length <= 500 ? buildBulkPreview("cancelar_separacao", selected.map((item) => ({ numeroRemota: item.numeroRemota, motivoCancelamento: value })), equipments) : [])
+    setOutcomes([])
+  }
   const choices = live.situations.filter((item) => item.ativo && !isMaintenanceSituation(item.nome)
     && !isWarrantySentSituation(item.nome) && (action === "finalizar_manutencao" || !isWarrantySeparatedSituation(item.nome))
     && (action !== "retornar_garantia" || (fields.condicaoRetorno === "Nova" ? item.nome === "Nova" : item.nome !== "Nova")))
@@ -94,7 +101,7 @@ export function BulkMovementDialog({ equipments, selectedIds, onClose, onComplet
   }
   return <Dialog open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
     <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
-      <DialogHeader><DialogTitle>Movimentação em massa</DialogTitle><DialogDescription>Valide os dados e confira o resultado de cada remota. As regras e permissões de cada procedimento continuam sendo aplicadas.</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{directSend ? "Confira as remotas selecionadas e confirme somente as que estão saindo fisicamente para a garantia. Cada uma mantém sua avaliação técnica vinculada." : directCancel ? "Cancele a separação antes da saída física. Informe a justificativa; as remotas retornarão para Triagem, preservando a avaliação e o histórico." : "Valide os dados e confira o resultado de cada remota. As regras e permissões de cada procedimento continuam sendo aplicadas."}</DialogDescription></DialogHeader>
       <fieldset disabled={saving} className="space-y-4">
         <label className="block space-y-1 text-sm">Ação<select aria-label="Ação do lote" className={selectClass} value={action} onChange={(event) => { setAction(event.target.value as BulkAction); setFields({ ...Object.fromEntries(checklistKeys.map((key) => [key, "Não testado"])), condicaoRetorno: "Usada" }); setNewNumbers({}); setPreview([]); setOutcomes([]); setSheets({}); setSheetName("") }}>{actions.map((item) => <option key={item} value={item}>{actionLabels[item]}</option>)}</select></label>
         <div role="group" aria-label="Forma de preenchimento" className="flex gap-2"><Button type="button" variant={mode === "common" ? "default" : "outline"} onClick={() => { setMode("common"); setPreview([]); setOutcomes([]) }}>Mesmos dados para o lote</Button><Button type="button" variant={mode === "file" ? "default" : "outline"} onClick={() => { setMode("file"); setPreview([]); setOutcomes([]) }}>Dados por planilha</Button></div>
@@ -136,7 +143,7 @@ export function BulkMovementDialog({ equipments, selectedIds, onClose, onComplet
         {saving && <p role="status" className="flex items-center gap-2 text-sm"><Spinner className="h-4 w-4" />{done} de {valid.length} movimentações processadas. Aguarde o resultado antes de sair.</p>}
         {!!outcomes.length && <div className="space-y-2"><p className="font-medium">Resultado: {outcomes.filter((item) => item.ok).length} concluída(s) · {outcomes.filter((item) => !item.ok).length} pendente(s)</p><div className="max-h-60 overflow-auto rounded-lg border"><table aria-label="Resultado do lote" className="w-full text-sm"><tbody>{outcomes.map((item) => <tr key={item.row} className="border-b"><td className="p-2">{item.number}</td><td className={item.ok ? "text-success" : "text-destructive"}>{item.ok ? "Concluída" : item.error}</td></tr>)}</tbody></table></div><Button type="button" variant="outline" onClick={downloadOutcome}>Baixar resultado</Button></div>}
       </fieldset>
-      <DialogFooter><Button type="button" variant="outline" disabled={saving} onClick={onClose}>Fechar</Button><Button type="button" disabled={saving || !valid.length || !!outcomes.length} onClick={() => void execute()}>Executar {valid.length} movimentação(ões)</Button></DialogFooter>
+      <DialogFooter><Button type="button" variant="outline" disabled={saving} onClick={onClose}>Fechar</Button><Button type="button" disabled={saving || !valid.length || !!outcomes.length} onClick={() => void execute()}>{directSend ? `Confirmar envio de ${valid.length} remota(s)` : directCancel ? `Confirmar cancelamento de ${preview.length ? valid.length : selected.length} remota(s)` : `Executar ${valid.length} movimentação(ões)`}</Button></DialogFooter>
     </DialogContent>
   </Dialog>
 }

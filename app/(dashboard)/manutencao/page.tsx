@@ -17,6 +17,8 @@ import { MaintenanceForm } from "@/components/maintenance-form"
 import { EquipmentInfo } from "@/components/equipment-info"
 import { MaintenanceHistory } from "@/components/maintenance-history"
 import { ForceFinishedDialog } from "@/components/force-finalize-dialog"
+import { BulkMovementDialog } from "@/components/bulk-movement-dialog"
+import { isWarrantySeparatedSituation } from "@/lib/validation"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
@@ -41,6 +43,11 @@ export default function MaintenancePage() {
   const [showForceFinalize, setShowForceFinalize] = useState(false)
   const [maintenanceToForceFinalize, setMaintenanceToForceFinalize] = useState<Maintenance | null>(null)
   const [equipmentToForceFinalize, setEquipmentToForceFinalize] = useState<Equipment | null>(null)
+  const [maintenanceSelection, setMaintenanceSelection] = useState<string[]>([])
+  const [bulkMode, setBulkMode] = useState<"conclude" | "separate" | null>(null)
+  const ownMaintenanceEquipments = equipmentsList.filter((item) => maintenancesInProgress.some((maintenance) => maintenance.id === item.manutencaoId && maintenance.tecnicoId === user?.id))
+  const selectedMaintenanceIds = maintenanceSelection.filter((id) => ownMaintenanceEquipments.some((item) => item.id === id))
+  const separationSituation = live.situations.find((item) => item.ativo && isWarrantySeparatedSituation(item.nome))?.nome
 
   // Verificar se o usuário é admin
   const isAdmin = user?.tipo === "admin"
@@ -144,12 +151,22 @@ export default function MaintenancePage() {
                   Remotas em Manutenção ({maintenancesInProgress.length})
                 </CardTitle>
                 <CardDescription className="text-sm text-muted-foreground">
-                  Clique em uma remota para continuar a manutenção
+                  Continue uma manutenção ou selecione várias sob sua responsabilidade para concluir em massa.
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
+            <div className="space-y-2 border-b border-warning/20 p-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label="Selecionar minhas manutenções em andamento" disabled={!ownMaintenanceEquipments.length} checked={ownMaintenanceEquipments.length > 0 && ownMaintenanceEquipments.every((item) => selectedMaintenanceIds.includes(item.id))} onChange={(event) => setMaintenanceSelection(event.target.checked ? ownMaintenanceEquipments.map((item) => item.id) : [])} />Selecionar minhas manutenções</label>
+                <span role="status" className="text-sm">{selectedMaintenanceIds.length} selecionada(s)</span>
+                <Button type="button" variant="outline" disabled={!selectedMaintenanceIds.length} onClick={() => setBulkMode("conclude")}>Concluir selecionadas</Button>
+                <Button type="button" disabled={!selectedMaintenanceIds.length || !separationSituation} onClick={() => setBulkMode("separate")}>Separar selecionadas para garantia</Button>
+                {!!selectedMaintenanceIds.length && <Button type="button" variant="ghost" onClick={() => setMaintenanceSelection([])}>Limpar seleção</Button>}
+              </div>
+              <p className="text-xs text-muted-foreground">Informe os mesmos resultados para o lote ou dados diferentes por planilha. A separação exige diagnóstico, serviços, checklist e motivo; a saída física é confirmada depois em Equipamentos.</p>
+            </div>
             <div className="divide-y divide-border/50">
               {maintenancesInProgress.map((maintenance) => {
                 const equipmentData = getEquipmentForMaintenance(maintenance)
@@ -159,6 +176,7 @@ export default function MaintenancePage() {
                     className="flex items-center justify-between p-4 transition-colors hover:bg-warning/10"
                   >
                     <div className="flex items-center gap-4">
+                      <input type="checkbox" aria-label={`Selecionar manutenção da remota ${maintenance.numeroRemota}`} disabled={!equipmentData || !ownMaintenanceEquipments.some((item) => item.id === equipmentData.id)} checked={!!equipmentData && selectedMaintenanceIds.includes(equipmentData.id)} onChange={(event) => { if (equipmentData) setMaintenanceSelection((old) => event.target.checked ? [...new Set([...old, equipmentData.id])] : old.filter((id) => id !== equipmentData.id)) }} />
                       <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10">
                         <Radio className="h-5 w-5 text-warning" />
                       </div>
@@ -399,6 +417,8 @@ export default function MaintenancePage() {
         operators={operators}
         onCreated={handleNewEquipmentCreated}
       />
+
+      {bulkMode && <BulkMovementDialog equipments={live.equipments} selectedIds={selectedMaintenanceIds} initialAction="finalizar_manutencao" initialSituation={bulkMode === "separate" ? separationSituation : undefined} onClose={() => setBulkMode(null)} onCompleted={(numbers) => setMaintenanceSelection((old) => old.filter((id) => !live.equipments.some((item) => item.id === id && numbers.includes(item.numeroRemota))))} />}
 
       {/* Dialog de Finalização Forçada */}
       {maintenanceToForceFinalize && equipmentToForceFinalize && user && (

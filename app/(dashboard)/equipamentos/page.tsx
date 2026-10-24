@@ -28,9 +28,10 @@ import { WarrantyDialog } from "@/components/warranty-dialog"
 import { WarrantyPreparationActions } from "@/components/warranty-preparation-actions"
 import { WarrantyHistory } from "@/components/warranty-history"
 import { BulkMovementDialog } from "@/components/bulk-movement-dialog"
+import type { BulkAction } from "@/lib/bulk-movements"
 import { isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
 import { filterEquipmentRegistration, searchEquipments, type EquipmentRegistrationFilter } from "@/lib/equipment-search"
-import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload, ShieldCheck } from "lucide-react"
+import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload, ShieldCheck, Send, Undo2 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -43,6 +44,8 @@ export default function EquipmentsPage() {
   const canMove = hasPermission(["admin", "tecnico"])
   const [movementIds, setMovementIds] = useState<string[]>([])
   const [showBulkMovement, setShowBulkMovement] = useState(false)
+  const [bulkInitialAction, setBulkInitialAction] = useState<BulkAction | undefined>()
+  const [warrantyQueueOnly, setWarrantyQueueOnly] = useState(false)
   
   const equipments = live.equipments
   const loading = live.loading
@@ -54,7 +57,13 @@ export default function EquipmentsPage() {
   const [situacaoFilter, setSituacaoFilter] = useState("")
   const equipmentSituations = live.situations.filter((item) => item.ativo)
   const matches = useMemo(() => searchEquipments(equipments, search, situacaoFilter), [equipments, search, situacaoFilter])
-  const filteredEquipments = useMemo(() => filterEquipmentRegistration(matches, registrationFilter), [matches, registrationFilter])
+  const filteredEquipments = useMemo(() => filterEquipmentRegistration(matches, registrationFilter).filter((item) => !warrantyQueueOnly || (item.estadoRegistro !== "inativo" && item.garantia?.status === "separada")), [matches, registrationFilter, warrantyQueueOnly])
+  const movementEquipments = equipments.filter((item) => movementIds.includes(item.id))
+  const hasPreparedSelection = movementEquipments.length > 0 && movementEquipments.every((item) => item.estadoRegistro !== "inativo" && item.garantia?.status === "separada" && item.garantia.maintenanceId && isWarrantySeparatedSituation(item.situacaoRemota || ""))
+  const canSeparateSelected = movementEquipments.length > 0 && movementEquipments.every((item) => item.estadoRegistro !== "inativo" && live.maintenances.some((maintenance) => maintenance.id === item.manutencaoId && maintenance.status === "em_andamento" && maintenance.tecnicoId === user?.id))
+  const separationSituation = equipmentSituations.find((item) => isWarrantySeparatedSituation(item.nome))?.nome
+  const awaitingDispatchCount = equipments.filter((item) => item.estadoRegistro !== "inativo" && item.garantia?.status === "separada").length
+  function openBulk(action?: BulkAction) { setBulkInitialAction(action); setShowBulkMovement(true) }
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null)
   const [equipmentHistory, setEquipmentHistory] = useState<Maintenance[]>([])
   const loadingHistory = live.loading
@@ -210,7 +219,7 @@ export default function EquipmentsPage() {
                 aria-label="Filtrar por situação"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 value={situacaoFilter}
-                onChange={(e) => setSituacaoFilter(e.target.value)}
+                onChange={(e) => { setSituacaoFilter(e.target.value); setWarrantyQueueOnly(false) }}
               >
                 <option value="">Todas as situações</option>
                 {equipmentSituations.map((situation) => (
@@ -223,10 +232,22 @@ export default function EquipmentsPage() {
           </div>
 
           <div role="group" aria-label="Registros exibidos" className="mb-2 flex flex-wrap gap-2">
-            {([ ["todas", "Todas"], ["ativas", "Ativas"], ["arquivadas", "Arquivadas"] ] as const).map(([value, label]) => <Button key={value} size="sm" variant={registrationFilter === value ? "default" : "outline"} aria-pressed={registrationFilter === value} onClick={() => setRegistrationFilter(value)}>{label} ({filterEquipmentRegistration(matches, value).length})</Button>)}
+            {([ ["todas", "Todas"], ["ativas", "Ativas"], ["arquivadas", "Arquivadas"] ] as const).map(([value, label]) => <Button key={value} size="sm" variant={!warrantyQueueOnly && registrationFilter === value ? "default" : "outline"} aria-pressed={!warrantyQueueOnly && registrationFilter === value} onClick={() => { setRegistrationFilter(value); setWarrantyQueueOnly(false) }}>{label} ({filterEquipmentRegistration(matches, value).length})</Button>)}
+            {canMove && <Button type="button" size="sm" variant={warrantyQueueOnly ? "default" : "outline"} aria-pressed={warrantyQueueOnly} onClick={() => { setWarrantyQueueOnly(!warrantyQueueOnly); if (!warrantyQueueOnly) { setSearch(""); setSituacaoFilter(""); setRegistrationFilter("ativas") } }}><Send className="mr-2 h-4 w-4" />Aguardando envio para garantia ({awaitingDispatchCount})</Button>}
           </div>
           <p className="mb-4 text-xs text-muted-foreground">A busca inclui cadastros arquivados e vínculos de substituição. Use os filtros para consultar somente ativas ou arquivadas.</p>
-          {canMove && <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border p-3"><span className="text-sm">{movementIds.length} remota(s) selecionada(s)</span><Button type="button" variant="outline" onClick={() => setShowBulkMovement(true)}>Movimentação em massa</Button>{!!movementIds.length && <Button type="button" variant="ghost" onClick={() => setMovementIds([])}>Limpar seleção</Button>}</div>}
+          {canMove && <div className="mb-4 space-y-2 rounded-lg border p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span role="status" className="text-sm">{movementEquipments.length} remota(s) selecionada(s)</span>
+              <Button type="button" disabled={!hasPreparedSelection} onClick={() => openBulk("enviar_garantia")}><Send className="mr-2 h-4 w-4" />Enviar selecionadas para garantia</Button>
+              <Button type="button" variant="outline" disabled={!hasPreparedSelection} onClick={() => openBulk("cancelar_separacao")}><Undo2 className="mr-2 h-4 w-4" />Cancelar separação das selecionadas</Button>
+              <Button type="button" variant="outline" disabled={!canSeparateSelected || !separationSituation} onClick={() => openBulk("finalizar_manutencao")}>Separar selecionadas para garantia</Button>
+              <Button type="button" variant="outline" onClick={() => openBulk()}>Movimentação em massa</Button>
+              {!!movementIds.length && <Button type="button" variant="ghost" onClick={() => setMovementIds([])}>Limpar seleção</Button>}
+            </div>
+            <p className="text-xs text-muted-foreground">Para separar, selecione remotas em manutenção sob sua responsabilidade. Para enviar ou cancelar a separação, selecione remotas aguardando saída para garantia.</p>
+            {movementEquipments.some((item) => !filteredEquipments.some((shown) => shown.id === item.id)) && <p className="text-xs text-muted-foreground">A seleção inclui remotas fora do filtro atual. Use Limpar seleção para selecionar somente as exibidas.</p>}
+          </div>}
 
           {filteredEquipments.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
@@ -669,7 +690,7 @@ export default function EquipmentsPage() {
         onImported={handleImportComplete}
       />
       {warrantyEquipment && <WarrantyDialog key={warrantyEquipment.id} equipment={warrantyEquipment} situations={equipmentSituations} operators={live.operators} onClose={() => setWarrantyEquipmentId(null)} />}
-      {showBulkMovement && <BulkMovementDialog equipments={equipments} selectedIds={movementIds} onClose={() => setShowBulkMovement(false)} onCompleted={(numbers) => setMovementIds((old) => old.filter((id) => !equipments.some((item) => item.id === id && numbers.includes(item.numeroRemota))))} />}
+      {showBulkMovement && <BulkMovementDialog equipments={equipments} selectedIds={movementIds} initialAction={bulkInitialAction} initialSituation={bulkInitialAction === "finalizar_manutencao" ? separationSituation : undefined} onClose={() => setShowBulkMovement(false)} onCompleted={(numbers) => setMovementIds((old) => old.filter((id) => !equipments.some((item) => item.id === id && numbers.includes(item.numeroRemota))))} />}
     </div>
   )
 }
