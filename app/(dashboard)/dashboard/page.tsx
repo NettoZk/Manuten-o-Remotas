@@ -1,28 +1,18 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "@/components/ui/chart"
+import { ChartTooltip } from "@/components/ui/chart"
+import { ReportMonthFilter } from "@/components/report-month-filter"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer } from "recharts"
-import { getDashboardStats } from "@/lib/services"
-import type { Maintenance } from "@/lib/types"
+import { useLiveData } from "@/contexts/live-data-context"
+import { calculateDashboard, monthKey, monthLabel } from "@/lib/dashboard"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { Radio, Wrench, CheckCircle, Clock, TrendingUp, Activity, RefreshCw, PieChartIcon, BarChart3, Users } from "lucide-react"
+import { Radio, Wrench, CheckCircle, Clock, TrendingUp, RefreshCw, PieChartIcon, BarChart3, Users } from "lucide-react"
 import { cn } from "@/lib/utils"
-
-interface DashboardStats {
-  totalEquipments: number
-  totalMaintenances: number
-  inProgress: number
-  completedThisMonth: number
-  recentMaintenances: Maintenance[]
-  remotasPorSituacao: { name: string; value: number }[]
-  manutencoesPorTecnico: { name: string; total: number }[]
-  manutencoesPorMes: { mes: string; total: number }[]
-}
 
 // Cores vibrantes para os gráficos (otimizadas para tema escuro)
 const COLORS = [
@@ -37,54 +27,13 @@ const COLORS = [
 ]
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
-
-  const loadStats = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) {
-      setRefreshing(true)
-    }
-    try {
-      const data = await getDashboardStats()
-      setStats(data)
-      setLastUpdate(new Date())
-    } catch (error) {
-      console.error("Erro ao carregar estatisticas:", error)
-      // Definir valores padrão em caso de erro
-      if (!stats) {
-        setStats({
-          totalEquipments: 0,
-          totalMaintenances: 0,
-          inProgress: 0,
-          completedThisMonth: 0,
-          recentMaintenances: [],
-          remotasPorSituacao: [],
-          manutencoesPorTecnico: [],
-          manutencoesPorMes: [],
-        })
-      }
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [stats])
-
-  useEffect(() => {
-    loadStats()
-    
-    // Auto-refresh a cada 30 segundos
-    const interval = setInterval(() => {
-      loadStats()
-    }, 30000)
-
-    return () => clearInterval(interval)
-  }, [loadStats])
-
-  const handleRefresh = () => {
-    loadStats(true)
-  }
+  const { equipments, maintenances, loading, error, lastUpdate, refresh } = useLiveData()
+  const [selectedMonth, setSelectedMonth] = useState(() => monthKey(new Date()))
+  const stats = useMemo(() => calculateDashboard(equipments, maintenances, selectedMonth), [equipments, maintenances, selectedMonth])
+  const firstYear = useMemo(() => maintenances.reduce((earliest, item) => item.dataFinalizacao ? Math.min(earliest, Number(monthKey(item.dataFinalizacao).slice(0, 4))) : earliest, Number(monthKey(new Date()).slice(0, 4)) - 6), [maintenances])
+  const refreshing = loading
+  const handleRefresh = refresh
+  if (error) return <div role="alert" className="rounded-lg border border-destructive/40 p-6">Não foi possível carregar o dashboard. Use “Tentar novamente” para sincronizar.</div>
 
   if (loading) {
     return (
@@ -122,7 +71,7 @@ export default function DashboardPage() {
     {
       title: "Finalizadas no Mes",
       value: stats?.completedThisMonth || 0,
-      description: "Manutencoes concluidas",
+      description: `Concluídas em ${monthLabel(selectedMonth)}`,
       icon: CheckCircle,
       color: "text-success",
       bgColor: "bg-success/10",
@@ -186,7 +135,7 @@ export default function DashboardPage() {
       {/* Charts Section */}
       <div className="grid gap-4 md:grid-cols-2">
         {/* Gráfico de Pizza - Remotas por Situação */}
-        <Card className="border-border/50 bg-card">
+        <Card data-monthly-report className="border-border/50 bg-card">
           <CardHeader className="pb-4">
             <div className="flex items-center gap-3">
               <div className="rounded-lg bg-primary/10 p-2">
@@ -194,12 +143,16 @@ export default function DashboardPage() {
               </div>
               <div>
                 <CardTitle className="text-lg font-semibold text-foreground">
-                  Remotas por Situacao
+                  Remotas por situação — {monthLabel(selectedMonth)}
                 </CardTitle>
                 <CardDescription className="text-sm text-muted-foreground">
-                  Distribuicao das remotas por status atual
+                  Situação da última manutenção concluída no mês, contando cada remota uma vez.
                 </CardDescription>
               </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-end gap-3 print:hidden">
+              <ReportMonthFilter value={selectedMonth} onChange={setSelectedMonth} firstYear={firstYear} />
+              <Button variant="outline" className="h-10" onClick={() => window.print()} disabled={!stats.uniqueCompleted}>Imprimir relatório</Button>
             </div>
           </CardHeader>
           <CardContent>
@@ -208,6 +161,7 @@ export default function DashboardPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
+                      isAnimationActive={false}
                       data={stats.remotasPorSituacao}
                       cx="50%"
                       cy="50%"
@@ -244,9 +198,13 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="flex h-75 items-center justify-center">
-                <p className="text-sm text-muted-foreground">Sem dados disponiveis</p>
+                <p className="text-sm text-muted-foreground">Nenhuma manutenção concluída no mês selecionado</p>
               </div>
             )}
+            <p className="mb-3 text-sm font-medium">{stats.uniqueCompleted} remota(s) · {stats.completedThisMonth} manutenção(ões) concluída(s)</p>
+            {stats.uniqueCompleted > 0 && <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Situação final</th><th>Remotas</th><th>Percentual</th></tr></thead><tbody>{stats.remotasPorSituacao.map((item) => <tr key={item.name} className="border-b"><td className="py-2">{item.name}</td><td>{item.value}</td><td>{(item.value / stats.uniqueCompleted * 100).toFixed(1)}%</td></tr>)}</tbody></table>}
+            {stats.missingSituation > 0 && <p className="mt-3 text-xs text-muted-foreground">{stats.missingSituation} remota(s) possuem conclusão antiga sem situação registrada. A situação atual do cadastro não é usada para alterar o passado.</p>}
+            <p className="mt-3 text-xs text-muted-foreground">Período no horário de Brasília. Atendimentos em andamento não entram nesta distribuição.</p>
           </CardContent>
         </Card>
 
@@ -298,7 +256,7 @@ export default function DashboardPage() {
                         return null
                       }}
                     />
-                    <Bar dataKey="total" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                    <Bar isAnimationActive={false} dataKey="total" fill="#3b82f6" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -364,6 +322,7 @@ export default function DashboardPage() {
                     }}
                   />
                   <Line
+                    isAnimationActive={false}
                     type="monotone"
                     dataKey="total"
                     stroke="#ffffff"

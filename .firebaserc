@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "demo-remotas-tests",
+    "homologacao": "banco-teste-manutencao-remota"
+  }
+}

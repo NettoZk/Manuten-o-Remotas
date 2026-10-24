@@ -16,6 +16,7 @@ import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { updateEquipmentWithLog } from "@/lib/services"
+import { isMaintenanceSituation, isWarrantySentSituation } from "@/lib/validation"
 import type { Equipment, EquipmentSituation, EquipmentStatus } from "@/lib/types"
 import { useAuth } from "@/contexts/auth-context"
 import { Pencil } from "lucide-react"
@@ -69,7 +70,7 @@ export function EditEquipmentDialog({
           modelo: modelo.trim(),
           status,
           situacaoRemota: situacaoRemota || undefined,
-          observacoes: observacoes.trim() || undefined,
+          observacoes: observacoes.trim(),
         },
         user.id,
         user.nome
@@ -80,7 +81,7 @@ export function EditEquipmentDialog({
         modelo: modelo.trim(),
         status,
         situacaoRemota: situacaoRemota || undefined,
-        observacoes: observacoes.trim() || undefined,
+        observacoes: observacoes.trim(),
         ultimaEdicaoEm: new Date(),
         ultimaEdicaoPor: user.nome,
       }
@@ -90,7 +91,7 @@ export function EditEquipmentDialog({
       onOpenChange(false)
     } catch (error) {
       console.error("[v0] Erro ao atualizar equipamento:", error)
-      toast.error("Erro ao atualizar remota. Tente novamente.")
+      toast.error(error instanceof Error ? error.message : "Erro ao atualizar remota. Tente novamente.")
     } finally {
       setIsLoading(false)
     }
@@ -150,7 +151,7 @@ export function EditEquipmentDialog({
                   onChange={(e) => setSituacaoRemota(e.target.value)}
                 >
                   <option value="">Selecione...</option>
-                  {equipmentSituations.map((situation) => (
+                  {equipmentSituations.filter((item) => !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome)).map((situation) => (
                     <option key={situation.id} value={situation.nome}>
                       {situation.nome}
                     </option>

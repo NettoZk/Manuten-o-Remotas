@@ -1,10 +1,10 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState } from "react"
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore"
-import { db } from "@/lib/firebase"
+import { onIdTokenChanged, signInWithCustomToken, signOut as firebaseSignOut } from "firebase/auth"
+import { auth } from "@/lib/firebase"
+import { ApiError, apiRequest } from "@/lib/api-client"
 import type { User, UserRole } from "@/lib/types"
-import bcrypt from "bcryptjs"
 
 interface AuthContextType {
   user: User | null
@@ -13,126 +13,41 @@ interface AuthContextType {
   signOut: () => Promise<void>
   hasPermission: (roles: UserRole[]) => boolean
 }
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
-
-const AUTH_STORAGE_KEY = "manutencao_auth_user"
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
-
-  // Restaurar sessao do localStorage
   useEffect(() => {
-    const stored = localStorage.getItem(AUTH_STORAGE_KEY)
-    if (stored) {
+    localStorage.removeItem("manutencao_auth_user")
+    let active = true
+    let generation = 0
+    async function refresh() {
+      const request = ++generation
+      if (!auth.currentUser) { if (active) { setUser(null); setLoading(false) }; return }
       try {
-        const userData = JSON.parse(stored)
-        // Verificar se o usuario ainda existe e esta ativo
-        verifyUser(userData.id).then((isValid) => {
-          if (isValid) {
-            setUser({
-              ...userData,
-              criadoEm: new Date(userData.criadoEm)
-            })
-          } else {
-            localStorage.removeItem(AUTH_STORAGE_KEY)
-          }
-          setLoading(false)
-        })
-      } catch {
-        localStorage.removeItem(AUTH_STORAGE_KEY)
-        setLoading(false)
-      }
-    } else {
-      setLoading(false)
+        const { user: profile } = await apiRequest<{ user: Omit<User, "criadoEm"> & { criadoEm: string | null } }>("/api/auth/me")
+        if (active && request === generation) setUser({ ...profile, criadoEm: new Date(profile.criadoEm || 0) })
+      } catch (error) {
+        if (active && request === generation && error instanceof ApiError && [401, 403].includes(error.status)) { setUser(null); await firebaseSignOut(auth) }
+      } finally { if (active && request === generation) setLoading(false) }
     }
+    const unsubscribe = onIdTokenChanged(auth, () => { void refresh() })
+    const interval = setInterval(() => { void refresh() }, 60_000)
+    const visibility = () => { if (document.visibilityState === "visible") void refresh() }
+    document.addEventListener("visibilitychange", visibility)
+    return () => { active = false; generation++; unsubscribe(); clearInterval(interval); document.removeEventListener("visibilitychange", visibility) }
   }, [])
-
-  async function verifyUser(userId: string): Promise<boolean> {
-    try {
-      const userDoc = await getDoc(doc(db, "users", userId))
-      if (userDoc.exists()) {
-        const data = userDoc.data()
-        return data.ativo === true
-      }
-      return false
-    } catch (error) {
-      console.error("[v0] Erro ao verificar usuario:", error)
-      return false
-    }
+  async function signIn(username: string, password: string) {
+    const { token } = await apiRequest<{ token: string }>("/api/auth/login", { username, password }, false)
+    await signInWithCustomToken(auth, token)
+    const { user: profile } = await apiRequest<{ user: Omit<User, "criadoEm"> & { criadoEm: string | null } }>("/api/auth/me")
+    setUser({ ...profile, criadoEm: new Date(profile.criadoEm || 0) })
   }
-
-  const signIn = async (username: string, password: string) => {
-    console.log("[v0] Tentando login com usuario:", username)
-    
-    // Buscar usuario pelo username
-    const usersRef = collection(db, "users")
-    const q = query(usersRef, where("username", "==", username.toLowerCase()))
-    const snapshot = await getDocs(q)
-
-    if (snapshot.empty) {
-      console.log("[v0] Usuario nao encontrado")
-      throw new Error("Usuario ou senha invalidos")
-    }
-
-    const userDoc = snapshot.docs[0]
-    const userData = userDoc.data()
-    
-    console.log("[v0] Usuario encontrado:", userData.nome)
-
-    // Verificar se usuario esta ativo
-    if (!userData.ativo) {
-      console.log("[v0] Usuario inativo")
-      throw new Error("Usuario desativado. Entre em contato com o administrador.")
-    }
-
-    // Verificar senha
-    const passwordMatch = await bcrypt.compare(password, userData.senhaHash)
-    if (!passwordMatch) {
-      console.log("[v0] Senha incorreta")
-      throw new Error("Usuario ou senha invalidos")
-    }
-
-    const userObj: User = {
-      id: userDoc.id,
-      nome: userData.nome,
-      username: userData.username,
-      tipo: userData.tipo,
-      ativo: userData.ativo,
-      criadoEm: userData.criadoEm?.toDate() || new Date(),
-    }
-
-    console.log("[v0] Login bem sucedido:", userObj)
-    
-    // Salvar no localStorage
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userObj))
-    setUser(userObj)
-  }
-
-  const signOut = async () => {
-    localStorage.removeItem(AUTH_STORAGE_KEY)
-    setUser(null)
-  }
-
-  const hasPermission = (roles: UserRole[]) => {
-    if (!user) return false
-    return roles.includes(user.tipo)
-  }
-
-  return (
-    <AuthContext.Provider
-      value={{ user, loading, signIn, signOut, hasPermission }}
-    >
-      {children}
-    </AuthContext.Provider>
-  )
+  async function signOut() { setUser(null); await firebaseSignOut(auth) }
+  return <AuthContext.Provider value={{ user, loading, signIn, signOut, hasPermission: (roles) => Boolean(user?.ativo && roles.includes(user.tipo)) }}>{children}</AuthContext.Provider>
 }
-
 export function useAuth() {
   const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
+  if (!context) throw new Error("useAuth deve estar dentro de AuthProvider")
   return context
 }

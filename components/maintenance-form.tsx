@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,15 +10,17 @@ import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { Wrench, CheckSquare } from "lucide-react"
-import { finalizeMaintenance, updateEquipment, getServices, getEquipmentSituations } from "@/lib/services"
-import type { Maintenance, Equipment, Defect, Operator, Service, ChecklistItem, ChecklistStatus, EquipmentSituation } from "@/lib/types"
+import { finalizeMaintenance } from "@/lib/services"
+import { finalizationSchema, isWarrantySentSituation } from "@/lib/validation"
+import { useLiveData } from "@/contexts/live-data-context"
+import type { Maintenance, Equipment, Defect, Operator, ChecklistItem, ChecklistStatus } from "@/lib/types"
 
 interface MaintenanceFormProps {
   maintenance: Maintenance
   equipment: Equipment
   defects: Defect[]
   operators: Operator[]
-  onFinalized: () => void
+  onFinalized: () => void | Promise<void>
 }
 
 const checklistItems: { key: keyof ChecklistItem; label: string }[] = [
@@ -40,8 +42,9 @@ export function MaintenanceForm({
   onFinalized,
 }: MaintenanceFormProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const [services, setServices] = useState<Service[]>([])
-  const [equipmentSituations, setEquipmentSituations] = useState<EquipmentSituation[]>([])
+  const live = useLiveData()
+  const services = live.services.filter((item) => item.ativo)
+  const equipmentSituations = live.situations.filter((item) => item.ativo && !["manutenção", "manutencao"].includes(item.nome.toLocaleLowerCase("pt-BR")))
   
   const [defeitoEncontrado, setDefeitoEncontrado] = useState(maintenance.defeitoEncontrado || "")
   const [defeitoEncontradoOutro, setDefeitoEncontradoOutro] = useState(maintenance.defeitoEncontradoOutro || "")
@@ -50,23 +53,9 @@ export function MaintenanceForm({
   const [operadoraDepois, setOperadoraDepois] = useState(maintenance.operadoraDepois || equipment.operadoraAtual)
   const [checklist, setChecklist] = useState<ChecklistItem>(maintenance.checklist)
   const [observacoes, setObservacoes] = useState(maintenance.observacoes || "")
-  const [situacaoRemota, setSituacaoRemota] = useState(equipment.situacaoRemota || "")
-
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [servicesData, situationsData] = await Promise.all([
-          getServices(),
-          getEquipmentSituations()
-        ])
-        setServices(servicesData.filter((s) => s.ativo))
-        setEquipmentSituations(situationsData.filter((s) => s.ativo))
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error)
-      }
-    }
-    loadData()
-  }, [])
+  const [situacaoRemota, setSituacaoRemota] = useState("")
+  const [motivoGarantia, setMotivoGarantia] = useState(maintenance.motivoGarantia || "")
+  const sendingToWarranty = isWarrantySentSituation(situacaoRemota)
 
   const handleChecklistChange = (key: keyof ChecklistItem, value: ChecklistStatus) => {
     setChecklist((prev) => ({ ...prev, [key]: value }))
@@ -81,59 +70,18 @@ export function MaintenanceForm({
   }
 
   const handleFinalize = async () => {
-    if (!defeitoEncontrado) {
-      toast.error("Selecione o defeito encontrado")
-      return
-    }
-    if (defeitoEncontrado === "Outro" && !defeitoEncontradoOutro.trim()) {
-      toast.error("Descreva o defeito encontrado")
-      return
-    }
-    if (servicosRealizados.length === 0 && !servicosRealizadosOutro.trim()) {
-      toast.error("Selecione pelo menos um serviço realizado")
-      return
-    }
-
+    const result = finalizationSchema.safeParse({ defeitoEncontrado, defeitoEncontradoOutro, servicosRealizados, servicosRealizadosOutro, operadoraDepois, checklist, observacoes, situacaoRemota, ...(sendingToWarranty ? { motivoGarantia } : {}) })
+    if (!result.success) { toast.error(result.error.issues[0].message); return }
+    if (!operators.some((item) => item.ativo && item.nome === operadoraDepois)) { toast.error("Selecione uma operadora ativa"); return }
+    if (!equipmentSituations.some((item) => item.nome === situacaoRemota)) { toast.error("Selecione uma situação final válida"); return }
     setIsLoading(true)
     try {
-      await finalizeMaintenance(maintenance.id, equipment.id, {
-        defeitoEncontrado,
-        defeitoEncontradoOutro: defeitoEncontradoOutro || undefined,
-        servicosRealizados,
-        servicosRealizadosOutro: servicosRealizadosOutro || undefined,
-        operadoraDepois,
-        checklist,
-        observacoes,
-        situacaoRemota: situacaoRemota || undefined,
-      })
+      await finalizeMaintenance(maintenance.id, equipment.id, result.data)
 
-      // Preparar dados para atualização do equipamento
-      const equipmentUpdate: { status?: "Usada"; operadoraAtual?: string; situacaoRemota?: string } = {}
-
-      // Update equipment status to "Usada" if it was "Nova"
-      if (equipment.status === "Nova") {
-        equipmentUpdate.status = "Usada"
-      }
-
-      // Update operator if changed
-      if (operadoraDepois !== equipment.operadoraAtual) {
-        equipmentUpdate.operadoraAtual = operadoraDepois
-      }
-
-      // Update situacaoRemota if provided
-      if (situacaoRemota) {
-        equipmentUpdate.situacaoRemota = situacaoRemota
-      }
-
-      // Atualizar equipamento se houver mudanças
-      if (Object.keys(equipmentUpdate).length > 0) {
-        await updateEquipment(equipment.id, equipmentUpdate)
-      }
-
-      onFinalized()
+      await onFinalized()
     } catch (error) {
       console.error("Erro ao finalizar manutenção:", error)
-      toast.error("Erro ao finalizar manutenção")
+      toast.error(error instanceof Error ? error.message : "Erro ao finalizar manutenção")
     } finally {
       setIsLoading(false)
     }
@@ -154,8 +102,9 @@ export function MaintenanceForm({
         <CardContent className="space-y-6">
           <FieldGroup>
             <Field>
-              <FieldLabel>Defeito Encontrado</FieldLabel>
+              <FieldLabel htmlFor="defeito-encontrado">Defeito encontrado *</FieldLabel>
               <select
+                id="defeito-encontrado"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 value={defeitoEncontrado}
                 onChange={(e) => setDefeitoEncontrado(e.target.value)}
@@ -216,12 +165,14 @@ export function MaintenanceForm({
           </div>
 
           <Field>
-            <FieldLabel>Operadora Após Manutenção</FieldLabel>
+            <FieldLabel htmlFor="operadora-depois">Operadora após manutenção *</FieldLabel>
             <select
+              id="operadora-depois"
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               value={operadoraDepois}
               onChange={(e) => setOperadoraDepois(e.target.value)}
             >
+              <option value="">Selecione a operadora...</option>
               {operators.map((operator) => (
                 <option key={operator.id} value={operator.nome}>
                   {operator.nome}
@@ -236,8 +187,9 @@ export function MaintenanceForm({
           </Field>
 
           <Field>
-            <FieldLabel>Situação da Remota (opcional)</FieldLabel>
+            <FieldLabel htmlFor="situacao-final">Situação após a manutenção *</FieldLabel>
             <select
+              id="situacao-final"
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               value={situacaoRemota}
               onChange={(e) => setSituacaoRemota(e.target.value)}
@@ -250,9 +202,15 @@ export function MaintenanceForm({
               ))}
             </select>
             <p className="mt-1 text-xs text-muted-foreground">
-              Define a situação atual da remota após análise técnica
+              Escolha a situação de saída. A remota não pode continuar em Manutenção.
             </p>
           </Field>
+
+          {sendingToWarranty && <Field>
+            <FieldLabel htmlFor="motivo-garantia">Motivo do envio para garantia *</FieldLabel>
+            <Textarea id="motivo-garantia" required minLength={10} maxLength={2000} value={motivoGarantia} onChange={(event) => setMotivoGarantia(event.target.value)} placeholder="Descreva os testes realizados e por que a remota precisa seguir para garantia" />
+            <p className="text-xs text-muted-foreground">Ao concluir, esta manutenção ficará vinculada ao envio para garantia, com o técnico, defeitos, serviços e checklist registrados.</p>
+          </Field>}
 
           <Field>
             <FieldLabel>Observações</FieldLabel>
@@ -313,9 +271,9 @@ export function MaintenanceForm({
       </Card>
 
       <div className="flex justify-end">
-        <Button onClick={handleFinalize} disabled={isLoading} size="lg">
+        <Button onClick={handleFinalize} disabled={isLoading || live.loading || Boolean(live.error)} size="lg">
           {isLoading ? <Spinner className="mr-2 h-4 w-4" /> : null}
-          Finalizar Manutenção
+        {sendingToWarranty ? "Finalizar manutenção e enviar para garantia" : "Finalizar Manutenção"}
         </Button>
       </div>
     </div>

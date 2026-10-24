@@ -6,6 +6,18 @@ __v0_jsx-dev-runtime.ts
 # Common ignores
 node_modules/
 .next/
+.next-local/
 .env*.local
 .DS_Store
 .vercel
+.env
+.env.*
+!.env.example
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+test-results/
+playwright-report/
+coverage/
+.local/
+*.tsbuildinfo

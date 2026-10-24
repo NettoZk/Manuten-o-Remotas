@@ -1,50 +1,42 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
+import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
-import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Search, Plus, Clock, Radio, Eye, ArrowRight, Lock, AlertTriangle } from "lucide-react"
-import {
-  getEquipmentByNumber,
-  getMaintenancesByEquipment,
-  createMaintenance,
-  getDefects,
-  getOperators,
-  getMaintenancesInProgress,
-  getEquipments,
-  forceFinalizeMaintenance,
-} from "@/lib/services"
-import type { Equipment, Maintenance, Defect, Operator, ChecklistItem } from "@/lib/types"
+import { createMaintenance } from "@/lib/services"
+import type { Equipment, Maintenance, Defect } from "@/lib/types"
 import { NewEquipmentDialog } from "@/components/new-equipment-dialog"
 import { MaintenanceForm } from "@/components/maintenance-form"
 import { EquipmentInfo } from "@/components/equipment-info"
 import { MaintenanceHistory } from "@/components/maintenance-history"
 import { ForceFinishedDialog } from "@/components/force-finalize-dialog"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Textarea } from "@/components/ui/textarea"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
 export default function MaintenancePage() {
   const { user } = useAuth()
+  const live = useLiveData()
   const [searchNumber, setSearchNumber] = useState("")
-  const [isSearching, setIsSearching] = useState(false)
-  const [equipment, setEquipment] = useState<Equipment | null>(null)
-  const [maintenanceHistory, setMaintenanceHistory] = useState<Maintenance[]>([])
+  const isSearching = live.loading
+  const [selectedEquipmentId, setSelectedEquipmentId] = useState<string | null>(null)
+  const equipment = live.equipments.find((item) => item.id === selectedEquipmentId) || null
+  const initialSearchApplied = useRef(false)
+  const maintenanceHistory = equipment ? live.maintenances.filter((item) => item.equipmentId === equipment.id || item.numeroRemota === equipment.numeroRemota) : []
+  const currentMaintenance = maintenanceHistory.find((item) => item.status === "em_andamento") || null
+  const defects = live.defects.filter((item) => item.ativo)
+  const operators = live.operators.filter((item) => item.ativo)
+  const maintenancesInProgress = live.maintenances.filter((item) => item.status === "em_andamento")
+  const equipmentsList = live.equipments.filter((item) => item.estadoRegistro !== "inativo")
+  const loadingInProgress = live.loading
   const [showNewEquipmentDialog, setShowNewEquipmentDialog] = useState(false)
-  const [defects, setDefects] = useState<Defect[]>([])
-  const [operators, setOperators] = useState<Operator[]>([])
   const [isCreatingMaintenance, setIsCreatingMaintenance] = useState(false)
-  const [currentMaintenance, setCurrentMaintenance] = useState<Maintenance | null>(null)
-  const [maintenancesInProgress, setMaintenancesInProgress] = useState<Maintenance[]>([])
-  const [equipmentsList, setEquipmentsList] = useState<Equipment[]>([])
-  const [loadingInProgress, setLoadingInProgress] = useState(true)
   const [viewMode, setViewMode] = useState<"edit" | "view">("edit")
   const [showForceFinalize, setShowForceFinalize] = useState(false)
   const [maintenanceToForceFinalize, setMaintenanceToForceFinalize] = useState<Maintenance | null>(null)
@@ -53,158 +45,36 @@ export default function MaintenancePage() {
   // Verificar se o usuário é admin
   const isAdmin = user?.tipo === "admin"
 
+  const selectEquipment = (numero: string, mode: "view" | "edit") => {
+    setSearchNumber(numero)
+    const found = live.equipments.find((item) => item.numeroRemota === numero.trim())
+    setViewMode(found?.estadoRegistro === "inativo" ? "view" : mode)
+    setSelectedEquipmentId(found?.id || null)
+    return found
+  }
   useEffect(() => {
-    async function loadData() {
-      try {
-        // Carregar dados em paralelo com tratamento individual de erros
-        const [defectsResult, operatorsResult, inProgressResult, equipmentsResult] = await Promise.allSettled([
-          getDefects(),
-          getOperators(),
-          getMaintenancesInProgress(),
-          getEquipments(),
-        ])
-
-        if (defectsResult.status === "fulfilled") {
-          setDefects(defectsResult.value.filter((d) => d.ativo))
-        } else {
-          console.error("Erro ao carregar defeitos:", defectsResult.reason)
-        }
-
-        if (operatorsResult.status === "fulfilled") {
-          setOperators(operatorsResult.value.filter((o) => o.ativo))
-        } else {
-          console.error("Erro ao carregar operadoras:", operatorsResult.reason)
-        }
-
-        if (inProgressResult.status === "fulfilled") {
-          setMaintenancesInProgress(inProgressResult.value)
-        } else {
-          console.error("Erro ao carregar manutenções em andamento:", inProgressResult.reason)
-        }
-
-        if (equipmentsResult.status === "fulfilled") {
-          setEquipmentsList(equipmentsResult.value)
-        } else {
-          console.error("Erro ao carregar equipamentos:", equipmentsResult.reason)
-        }
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error)
-      } finally {
-        setLoadingInProgress(false)
-      }
-    }
-    loadData()
-  }, [])
-
-  const refreshMaintenancesInProgress = async () => {
-    try {
-      const inProgressData = await getMaintenancesInProgress()
-      setMaintenancesInProgress(inProgressData)
-    } catch (error) {
-      console.error("Erro ao atualizar manutenções em andamento:", error)
+    if (live.loading || initialSearchApplied.current) return
+    initialSearchApplied.current = true
+    const numero = new URLSearchParams(window.location.search).get("remota")
+    if (!numero) return
+    const found = live.equipments.find((item) => item.numeroRemota === numero)
+    setSearchNumber(numero)
+    setSelectedEquipmentId(found?.id || null)
+    setViewMode(found?.estadoRegistro === "inativo" ? "view" : "edit")
+    if (!found) toast.error("Remota não encontrada")
+  }, [live.loading, live.equipments])
+  const handleSearch = () => {
+    if (!searchNumber.trim()) { toast.error("Digite o número da remota"); return }
+    if (!selectEquipment(searchNumber.trim(), "edit")) {
+      setShowNewEquipmentDialog(true)
     }
   }
-
-  const handleSearch = async () => {
-    if (!searchNumber.trim()) {
-      toast.error("Digite o número da remota")
-      return
-    }
-
-    setIsSearching(true)
-    setEquipment(null)
-    setMaintenanceHistory([])
-    setCurrentMaintenance(null)
-    setViewMode("edit")
-
-    try {
-      const foundEquipment = await getEquipmentByNumber(searchNumber.trim())
-
-      if (foundEquipment) {
-        setEquipment(foundEquipment)
-        
-        try {
-          const history = await getMaintenancesByEquipment(searchNumber.trim())
-          setMaintenanceHistory(history)
-
-          // Check if there's an ongoing maintenance
-          const ongoing = history.find((m) => m.status === "em_andamento")
-          if (ongoing) {
-            setCurrentMaintenance(ongoing)
-          }
-        } catch (historyError) {
-          console.error("Erro ao carregar histórico:", historyError)
-          // Continua sem o histórico, pelo menos mostra o equipamento
-        }
-      } else {
-        setShowNewEquipmentDialog(true)
-      }
-    } catch (error) {
-      console.error("Erro ao buscar remota:", error)
-      toast.error("Erro ao buscar remota. Verifique a conexão e tente novamente.")
-    } finally {
-      setIsSearching(false)
-    }
-  }
-
-  const handleSelectRemotaFromList = async (maintenance: Maintenance) => {
-    setSearchNumber(maintenance.numeroRemota)
-    setIsSearching(true)
-    setEquipment(null)
-    setMaintenanceHistory([])
-    setCurrentMaintenance(null)
-    setViewMode("edit")
-
-    try {
-      const foundEquipment = await getEquipmentByNumber(maintenance.numeroRemota)
-
-      if (foundEquipment) {
-        setEquipment(foundEquipment)
-        const history = await getMaintenancesByEquipment(maintenance.numeroRemota)
-        setMaintenanceHistory(history)
-        setCurrentMaintenance(maintenance)
-      }
-    } catch (error) {
-      console.error("Erro ao carregar remota:", error)
-      toast.error("Erro ao carregar dados da remota")
-    } finally {
-      setIsSearching(false)
-    }
-  }
-
-  const handleViewRemotaDetails = async (numeroRemota: string) => {
-    setSearchNumber(numeroRemota)
-    setIsSearching(true)
-    setEquipment(null)
-    setMaintenanceHistory([])
-    setCurrentMaintenance(null)
-    setViewMode("view")
-
-    try {
-      const foundEquipment = await getEquipmentByNumber(numeroRemota)
-
-      if (foundEquipment) {
-        setEquipment(foundEquipment)
-        const history = await getMaintenancesByEquipment(numeroRemota)
-        setMaintenanceHistory(history)
-
-        const ongoing = history.find((m) => m.status === "em_andamento")
-        if (ongoing) {
-          setCurrentMaintenance(ongoing)
-        }
-      }
-    } catch (error) {
-      console.error("Erro ao carregar remota:", error)
-      toast.error("Erro ao carregar dados da remota")
-    } finally {
-      setIsSearching(false)
-    }
-  }
+  const handleSelectRemotaFromList = (maintenance: Maintenance) => { selectEquipment(maintenance.numeroRemota, "edit") }
+  const handleViewRemotaDetails = (numero: string) => { selectEquipment(numero, "view") }
 
   const handleNewEquipmentCreated = (newEquipment: Equipment) => {
-    setEquipment(newEquipment)
+    setSelectedEquipmentId(newEquipment.id)
     setShowNewEquipmentDialog(false)
-    setEquipmentsList((prev) => [newEquipment, ...prev])
     toast.success("Remota cadastrada com sucesso")
   }
 
@@ -216,7 +86,7 @@ export default function MaintenancePage() {
 
     setIsCreatingMaintenance(true)
     try {
-      const maintenanceId = await createMaintenance({
+      await createMaintenance({
         numeroRemota: equipment.numeroRemota,
         equipmentId: equipment.id,
         tecnicoId: user.id,
@@ -238,105 +108,19 @@ export default function MaintenancePage() {
         observacoes: "",
       }, equipment.situacaoRemota) // Passar situação atual para salvar como anterior
 
-      // Criar objeto de manutenção localmente para evitar nova busca
-      const newMaintenance: Maintenance = {
-        id: maintenanceId,
-        numeroRemota: equipment.numeroRemota,
-        equipmentId: equipment.id,
-        tecnicoId: user.id,
-        tecnicoNome: user.nome,
-        operadoraAntes: equipment.operadoraAtual,
-        operadoraDepois: equipment.operadoraAtual,
-        defeitoRelatado,
-        defeitoRelatadoOutro,
-        defeitoEncontrado: "",
-        servicosRealizados: [],
-        checklist: {
-          leituraSIMCard: "Não testado",
-          firmwareAtualizado: "Não testado",
-          sinal: "Não testado",
-          apnEnergiza: "Não testado",
-          comunicacaoMedidor: "Não testado",
-          comunicacaoIRIS: "Não testado",
-        },
-        observacoes: "",
-        dataEntrada: new Date(),
-        dataFinalizacao: null,
-        status: "em_andamento",
-      }
-
-      setCurrentMaintenance(newMaintenance)
-      setMaintenanceHistory((prev) => [newMaintenance, ...prev])
-      setMaintenancesInProgress((prev) => [newMaintenance, ...prev])
-      
-      // Atualizar o equipamento localmente para refletir a mudança de situação
-      setEquipment({
-        ...equipment,
-        situacaoAnterior: equipment.situacaoRemota,
-        situacaoRemota: "Manutenção",
-        emManutencaoPor: user.id,
-        emManutencaoNome: user.nome,
-        emManutencaoDesde: new Date(),
-        manutencaoId: maintenanceId,
-      })
-      
-      // Atualizar lista de equipamentos para refletir a situação na tela de equipamentos
-      setEquipmentsList((prev) =>
-        prev.map((e) =>
-          e.id === equipment.id
-            ? {
-                ...e,
-                situacaoRemota: "Manutenção",
-                emManutencaoPor: user.id,
-                emManutencaoNome: user.nome,
-                emManutencaoDesde: new Date(),
-                manutencaoId: maintenanceId,
-              }
-            : e
-        )
-      )
-      
+      // Dados e bloqueio chegam pela assinatura após a confirmação da transação.
       toast.success("Manutenção iniciada com sucesso!")
     } catch (error) {
       console.error("Erro ao iniciar manutenção:", error)
-      toast.error("Erro ao iniciar manutenção. Verifique os dados e tente novamente.")
+      toast.error(error instanceof Error ? error.message : "Erro ao iniciar manutenção")
     } finally {
       setIsCreatingMaintenance(false)
     }
   }
 
-  const handleMaintenanceFinalized = async () => {
-    if (!equipment) return
-
-    const history = await getMaintenancesByEquipment(equipment.numeroRemota)
-    setMaintenanceHistory(history)
-    setCurrentMaintenance(null)
-    await refreshMaintenancesInProgress()
-    toast.success("Manutenção finalizada com sucesso")
-  }
-
-  const getEquipmentForMaintenance = (maintenance: Maintenance) => {
-    return equipmentsList.find((e) => e.numeroRemota === maintenance.numeroRemota)
-  }
-
-  const handleForceFinalized = async () => {
-    if (!equipment) return
-
-    // Recarregar dados
-    const updatedEquipment = await getEquipmentByNumber(equipment.numeroRemota)
-    if (updatedEquipment) {
-      setEquipment(updatedEquipment)
-    }
-    
-    const history = await getMaintenancesByEquipment(equipment.numeroRemota)
-    setMaintenanceHistory(history)
-    setCurrentMaintenance(null)
-    await refreshMaintenancesInProgress()
-    
-    // Atualizar lista de equipamentos
-    const equipmentsData = await getEquipments()
-    setEquipmentsList(equipmentsData)
-  }
+  const handleMaintenanceFinalized = () => { toast.success("Manutenção finalizada com sucesso") }
+  const getEquipmentForMaintenance = (maintenance: Maintenance) => equipmentsList.find((item) => item.numeroRemota === maintenance.numeroRemota)
+  const handleForceFinalized = () => { /* Dados recebidos pela assinatura. */ }
 
   return (
     <div className="space-y-6">
@@ -449,14 +233,15 @@ export default function MaintenancePage() {
           <div className="flex gap-4">
             <div className="flex-1">
               <Input
-                placeholder="Numero da remota"
+              aria-label="Número/IMEI da remota"
+              placeholder="Número/IMEI atual ou arquivado"
                 value={searchNumber}
                 onChange={(e) => setSearchNumber(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                 className="h-11 bg-secondary/50"
               />
             </div>
-            <Button onClick={handleSearch} disabled={isSearching} className="h-11">
+            <Button onClick={handleSearch} disabled={isSearching || live.loading} className="h-11">
               {isSearching ? (
                 <Spinner className="mr-2 h-4 w-4" />
               ) : (
@@ -470,7 +255,8 @@ export default function MaintenancePage() {
 
       {equipment && (
         <>
-          {viewMode === "view" && (
+          {equipment.estadoRegistro === "inativo" && <Card className="border-warning/30 bg-warning/5"><CardContent className="space-y-2 py-4"><p className="font-medium">Remota arquivada · somente consulta</p><p className="text-sm text-muted-foreground">O cadastro e as manutenções anteriores permanecem disponíveis. Uma nova manutenção não pode ser aberta neste registro.</p>{equipment.substituidaPorNumero && <Button variant="outline" onClick={() => selectEquipment(equipment.substituidaPorNumero!, "edit")}>Consultar substituta {equipment.substituidaPorNumero}</Button>}</CardContent></Card>}
+          {viewMode === "view" && equipment.estadoRegistro !== "inativo" && (
             <Card className="border-primary/30 bg-primary/5">
               <CardContent className="flex items-center justify-between py-4">
                 <div className="flex items-center gap-3">
@@ -492,10 +278,10 @@ export default function MaintenancePage() {
 
           <EquipmentInfo equipment={equipment} />
 
-          {viewMode === "edit" && (
+          {viewMode === "edit" && equipment.estadoRegistro !== "inativo" && (
             <>
               {/* Verificar se a remota está bloqueada por outro técnico */}
-              {equipment.emManutencaoPor && 
+              {equipment.garantia?.status === "enviada" ? <Card className="border-warning/30 bg-warning/5"><CardContent className="py-6"><p className="font-medium">Remota enviada para garantia</p><p className="mt-1 text-sm text-muted-foreground">Registre o retorno em Equipamentos antes de iniciar uma manutenção.</p></CardContent></Card> : equipment.emManutencaoPor &&
                equipment.emManutencaoPor !== user?.id && 
                !currentMaintenance ? (
                 <Card className="border-destructive/30 bg-destructive/5">
@@ -547,6 +333,7 @@ export default function MaintenancePage() {
                 /* Técnico responsável ou manutenção atual */
                 currentMaintenance.tecnicoId === user?.id ? (
                   <MaintenanceForm
+                    key={currentMaintenance.id}
                     maintenance={currentMaintenance}
                     equipment={equipment}
                     defects={defects}
@@ -677,8 +464,9 @@ function StartMaintenanceCard({
       <CardContent className="pt-6">
         <FieldGroup>
           <Field>
-            <FieldLabel className="text-sm text-muted-foreground">Defeito Relatado</FieldLabel>
+            <FieldLabel htmlFor="defeito-relatado" className="text-sm text-muted-foreground">Defeito relatado *</FieldLabel>
             <select
+              id="defeito-relatado"
               className="flex h-11 w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               value={defeitoRelatado}
               onChange={(e) => setDefeitoRelatado(e.target.value)}

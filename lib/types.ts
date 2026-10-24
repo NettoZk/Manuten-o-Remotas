@@ -46,6 +46,30 @@ export interface Equipment {
   emManutencaoNome?: string      // Nome do técnico responsável
   emManutencaoDesde?: Date       // Data/hora que iniciou
   manutencaoId?: string          // ID da manutenção atual
+  garantia?: { id: string; status: "enviada" | "retornada"; enviadaEm: Date; retornadaEm?: Date; motivo: string; maintenanceId?: string }
+  remotaAnteriorId?: string
+  remotaAnteriorNumero?: string
+  garantiaOrigemId?: string
+  substituidaPorId?: string
+  substituidaPorNumero?: string
+}
+
+export interface Warranty {
+  id: string
+  equipmentId: string
+  numeroRemota: string
+  status: "enviada" | "retornada"
+  enviadaEm: Date
+  enviadaPor: string
+  motivo: string
+  maintenanceId?: string
+  situacaoEnvio: string
+  retornadaEm?: Date
+  retornadaPor?: string
+  observacoesRetorno?: string
+  situacaoRetorno?: string
+  novoEquipmentId?: string
+  novoNumeroRemota?: string
 }
 
 export type ChecklistStatus = "OK" | "Falha" | "Não testado"
@@ -77,7 +101,10 @@ export interface Maintenance {
   servicosRealizadosOutro?: string
   checklist: ChecklistItem
   observacoes: string
+  // Situação registrada na conclusão; independe de alterações futuras do equipamento.
+  situacaoRemota?: string
   status: "em_andamento" | "finalizada"
+  motivoGarantia?: string
   // Campos para finalização forçada
   finalizadoForcadamente?: boolean
   finalizadoForcadoPor?: string

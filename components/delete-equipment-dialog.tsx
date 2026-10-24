@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,8 +13,9 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
-import { deleteEquipment, archiveEquipment, hasMaintenanceHistory } from "@/lib/services"
+import { deleteEquipment, archiveEquipment } from "@/lib/services"
 import type { Equipment } from "@/lib/types"
+import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
 import { AlertTriangle, Archive } from "lucide-react"
 
@@ -33,31 +34,9 @@ export function DeleteEquipmentDialog({
 }: DeleteEquipmentDialogProps) {
   const { user } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
-  const [checking, setChecking] = useState(false)
-  const [hasHistory, setHasHistory] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    if (open && equipment) {
-      checkMaintenanceHistory()
-    } else {
-      setHasHistory(null)
-    }
-  }, [open, equipment])
-
-  const checkMaintenanceHistory = async () => {
-    if (!equipment) return
-    
-    setChecking(true)
-    try {
-      const result = await hasMaintenanceHistory(equipment.numeroRemota)
-      setHasHistory(result)
-    } catch (error) {
-      console.error("[v0] Erro ao verificar histórico:", error)
-      setHasHistory(true) // Por segurança, assume que tem histórico
-    } finally {
-      setChecking(false)
-    }
-  }
+  const live = useLiveData()
+  const checking = live.loading
+  const hasHistory = equipment ? Boolean(equipment.garantia || equipment.remotaAnteriorId || equipment.substituidaPorId || live.maintenances.some((item) => item.equipmentId === equipment.id || item.numeroRemota === equipment.numeroRemota)) : null
 
   const handleConfirm = async () => {
     if (!equipment || !user) return
@@ -78,7 +57,7 @@ export function DeleteEquipmentDialog({
       onOpenChange(false)
     } catch (error) {
       console.error("[v0] Erro ao excluir/arquivar equipamento:", error)
-      toast.error("Erro ao processar. Tente novamente.")
+      toast.error(error instanceof Error ? error.message : "Erro ao processar. Tente novamente.")
     } finally {
       setIsLoading(false)
     }
@@ -108,7 +87,7 @@ export function DeleteEquipmentDialog({
               ) : hasHistory ? (
                 <>
                   <div className="rounded-lg bg-warning/10 border border-warning/20 p-3 text-warning">
-                    Esta remota possui histórico de manutenção e não pode ser excluída. 
+                    Esta remota possui histórico de manutenção ou garantia e não pode ser excluída.
                     O registro será mantido como inativo para preservar os dados.
                   </div>
                   <p>

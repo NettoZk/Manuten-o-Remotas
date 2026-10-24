@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
+import { useLiveData } from "@/contexts/live-data-context"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,25 +30,21 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
 import {
-  getDefects,
   createDefect,
   updateDefect,
   deleteDefect,
-  getServices,
   createService,
   updateService,
   deleteService,
-  getOperators,
   createOperator,
   updateOperator,
   deleteOperator,
-  getEquipmentSituations,
   createEquipmentSituation,
   updateEquipmentSituation,
   deleteEquipmentSituation,
 } from "@/lib/services"
-import type { Defect, Service, Operator, EquipmentSituation } from "@/lib/types"
-import { Settings, Plus, Pencil, Trash2, AlertTriangle, Wrench, Signal, MapPin } from "lucide-react"
+import type { Defect, Service, Operator } from "@/lib/types"
+import { Plus, Pencil, Trash2, AlertTriangle, Wrench, Signal, MapPin } from "lucide-react"
 
 type ListItem = Defect | Service | Operator
 
@@ -265,7 +262,7 @@ function ListManager({
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir Item</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja excluir "{deletingItem?.nome}"? Esta ação
+              Tem certeza que deseja excluir &quot;{deletingItem?.nome}&quot;? Esta ação
               não pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -280,34 +277,8 @@ function ListManager({
 }
 
 export default function ListsPage() {
-  const [defects, setDefects] = useState<Defect[]>([])
-  const [services, setServices] = useState<Service[]>([])
-  const [operators, setOperators] = useState<Operator[]>([])
-  const [situations, setSituations] = useState<EquipmentSituation[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const loadData = async () => {
-    try {
-      const [defectsData, servicesData, operatorsData, situationsData] = await Promise.all([
-        getDefects(),
-        getServices(),
-        getOperators(),
-        getEquipmentSituations(),
-      ])
-      setDefects(defectsData)
-      setServices(servicesData)
-      setOperators(operatorsData)
-      setSituations(situationsData)
-    } catch (error) {
-      console.error("Erro ao carregar dados:", error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    loadData()
-  }, [])
+  const { defects, services, operators, situations, loading } = useLiveData()
+  const loadData = () => { /* As assinaturas atualizam as quatro listas. */ }
 
   if (loading) {
     return (

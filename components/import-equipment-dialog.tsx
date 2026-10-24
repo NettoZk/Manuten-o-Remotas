@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { createEquipment, getEquipmentByNumber, updateEquipment } from "@/lib/services"
 import type { EquipmentStatus } from "@/lib/types"
+import { equipmentTemplate, parseEquipmentRow } from "@/lib/equipment-import"
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle, Download } from "lucide-react"
 
 interface ImportRow {
@@ -49,94 +50,28 @@ export function ImportEquipmentDialog({
   onImported,
 }: ImportEquipmentDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [isLoading, setIsLoading] = useState(false)
   const [isValidating, setIsValidating] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([])
   const [fileName, setFileName] = useState("")
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 })
 
-  const normalizeStatus = (value: string): EquipmentStatus | null => {
-    const normalized = value?.toString().toLowerCase().trim()
-    if (normalized === "nova" || normalized === "new") return "Nova"
-    if (normalized === "usada" || normalized === "used") return "Usada"
-    return null
-  }
-
-  const normalizeSituacao = (value: string, status: EquipmentStatus): string => {
-    // Se não houver valor, aplicar regra automática
-    if (!value || value.trim() === "") {
-      return status === "Nova" ? "Nova" : "Triagem"
-    }
-    // Normalizar valores conhecidos para formato com primeira letra maiúscula
-    const normalized = value.trim().toLowerCase()
-    if (normalized === "nova" || normalized === "new") return "Nova"
-    if (normalized === "triagem" || normalized === "triage") return "Triagem"
-    if (normalized === "manutencao" || normalized === "manutenção" || normalized === "maintenance") return "Manutenção"
-    // Retorna o valor original com primeira letra maiúscula para situações customizadas
-    return value.trim().charAt(0).toUpperCase() + value.trim().slice(1).toLowerCase()
-  }
-
   const validateRow = async (row: Record<string, unknown>, rowIndex: number): Promise<ValidationResult> => {
-    const errors: string[] = []
-    
-    const numeroRemota = String(row["numeroRemota"] || row["numero_remota"] || row["Número da Remota"] || row["numero"] || "").trim()
-    const modelo = String(row["modelo"] || row["Modelo"] || "").trim()
-    const anoFabricacao = String(row["anoFabricacao"] || row["ano_fabricacao"] || row["Ano de Fabricação"] || row["ano"] || "").trim()
-    const lote = String(row["ocm"] || row["OCM"] || "").trim()
-    const operadoraAtual = String(row["operadoraAtual"] || row["operadora_atual"] || row["Operadora"] || row["operadora"] || "").trim()
-    const statusRaw = String(row["status"] || row["Status"] || "").trim()
-    const situacaoRaw = String(row["situacaoRemota"] || row["situacao_remota"] || row["Situação"] || row["situacao"] || "").trim()
-    const observacoes = String(row["observacoes"] || row["Observações"] || "").trim()
-
-    // Validações
-    if (!numeroRemota) {
-      errors.push("Número da remota é obrigatório")
-    }
-
-    if (!modelo) {
-      errors.push("Modelo é obrigatório")
-    }
-
-    if (!anoFabricacao) {
-      errors.push("Ano de fabricação é obrigatório")
-    }
-
-    if (!lote) {
-      errors.push("OCM é obrigatório")
-    }
-
-    if (!operadoraAtual) {
-      errors.push("Operadora é obrigatória")
-    }
-
-    const status = normalizeStatus(statusRaw)
-    if (!status && statusRaw) {
-      errors.push(`Status inválido: "${statusRaw}". Use "nova" ou "usada"`)
-    }
-
-    const finalStatus = status || "Nova"
-    const situacaoRemota = normalizeSituacao(situacaoRaw, finalStatus)
-
+    const { data, errors } = parseEquipmentRow(row)
+    const { numeroRemota } = data
     // Verificar se já existe
     let exists = false
     if (numeroRemota) {
       const existing = await getEquipmentByNumber(numeroRemota)
       exists = !!existing
+      if (existing?.estadoRegistro === "inativo") errors.push("Esta remota está arquivada")
+      if (existing?.garantia?.status === "enviada") errors.push("Registre o retorno da garantia antes de importar alterações")
+      if (existing?.manutencaoId || existing?.emManutencaoPor) errors.push("Finalize a manutenção antes de importar alterações")
     }
 
     return {
       row: rowIndex + 2, // +2 porque Excel começa em 1 e tem cabeçalho
-      data: {
-        numeroRemota,
-        modelo,
-        anoFabricacao,
-        lote,
-        operadoraAtual,
-        status: finalStatus,
-        situacaoRemota,
-        observacoes: observacoes || undefined,
-      },
+      data,
       isValid: errors.length === 0 && numeroRemota !== "",
       errors,
       exists,
@@ -168,6 +103,10 @@ export function ImportEquipmentDialog({
       const results: ValidationResult[] = []
       for (let i = 0; i < jsonData.length; i++) {
         const result = await validateRow(jsonData[i] as Record<string, unknown>, i)
+        if (results.some((previous) => previous.data.numeroRemota === result.data.numeroRemota)) {
+          result.errors.push("Número da remota repetido na planilha")
+          result.isValid = false
+        }
         results.push(result)
       }
 
@@ -193,6 +132,7 @@ export function ImportEquipmentDialog({
     let created = 0
     let updated = 0
     let failed = 0
+    const failedItems: ValidationResult[] = []
 
     for (let i = 0; i < validItems.length; i++) {
       const item = validItems[i]
@@ -205,12 +145,15 @@ export function ImportEquipmentDialog({
           if (existing) {
             await updateEquipment(existing.id, {
               modelo: item.data.modelo,
+              anoFabricacao: item.data.anoFabricacao,
+              lote: item.data.lote,
+              operadoraAtual: item.data.operadoraAtual,
               status: item.data.status,
               situacaoRemota: item.data.situacaoRemota,
-              observacoes: item.data.observacoes,
+              observacoes: item.data.observacoes || "",
             })
             updated++
-          }
+          } else { throw new Error("Equipamento removido durante a importação") }
         } else {
           // Criar novo
           await createEquipment({
@@ -221,12 +164,14 @@ export function ImportEquipmentDialog({
             operadoraAtual: item.data.operadoraAtual,
             status: item.data.status,
             situacaoRemota: item.data.situacaoRemota,
+            observacoes: item.data.observacoes || "",
           })
           created++
         }
       } catch (error) {
         console.error(`[v0] Erro ao importar remota ${item.data.numeroRemota}:`, error)
         failed++
+        failedItems.push({ ...item, isValid: false, errors: [error instanceof Error ? error.message : "Falha ao gravar esta linha"] })
       }
     }
 
@@ -237,9 +182,11 @@ export function ImportEquipmentDialog({
     if (updated > 0) messages.push(`${updated} atualizadas`)
     if (failed > 0) messages.push(`${failed} com erro`)
     
-    toast.success(`Importação concluída: ${messages.join(", ")}`)
+    if (failed) toast.warning(`Importação concluída: ${messages.join(", ")}`)
+    else toast.success(`Importação concluída: ${messages.join(", ")}`)
     onImported()
-    handleClose()
+    if (failedItems.length) setValidationResults(failedItems)
+    else handleClose()
   }
 
   const handleClose = () => {
@@ -253,28 +200,7 @@ export function ImportEquipmentDialog({
   }
 
   const downloadTemplate = () => {
-    const templateData = [
-      {
-        numeroRemota: "12345",
-        modelo: "RT-1000",
-        anoFabricacao: "2024",
-        lote: "L001",
-        operadoraAtual: "Claro",
-        status: "nova",
-        situacaoRemota: "",
-        observacoes: "",
-      },
-      {
-        numeroRemota: "67890",
-        modelo: "RT-2000",
-        anoFabricacao: "2023",
-        lote: "L002",
-        operadoraAtual: "Vivo",
-        status: "usada",
-        situacaoRemota: "",
-        observacoes: "Equipamento de reposição",
-      },
-    ]
+    const templateData = equipmentTemplate
 
     const worksheet = XLSX.utils.json_to_sheet(templateData)
     const workbook = XLSX.utils.book_new()

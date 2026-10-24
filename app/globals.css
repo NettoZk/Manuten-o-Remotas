@@ -158,3 +158,12 @@
 ::-webkit-scrollbar-thumb:hover {
   background: oklch(0.45 0.01 260);
 }
+
+@media print {
+  body * { visibility: hidden; }
+  [data-monthly-report], [data-monthly-report] * { visibility: visible; }
+  [data-monthly-report] { position: absolute; left: 0; top: 0; width: 100%; color: #111; background: white; border: none; }
+  [data-monthly-report] .text-muted-foreground { color: #444; }
+  [data-monthly-report] .text-foreground { color: #111; }
+  main { height: auto !important; overflow: visible !important; }
+}

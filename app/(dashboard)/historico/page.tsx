@@ -1,23 +1,26 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
-import { getAllMaintenances, getEquipments, getOperators, getUsers } from "@/lib/services"
 import { exportMaintenancesToExcel } from "@/lib/excel-export"
 import type { Maintenance, Equipment, Operator, User } from "@/lib/types"
-import { History, Search, Download, Filter, X } from "lucide-react"
-import { format, isWithinInterval, parseISO } from "date-fns"
+import { History, Download, Filter, X } from "lucide-react"
+import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
 export default function HistoryPage() {
+  const router = useRouter()
   const { hasPermission } = useAuth()
+  const live = useLiveData()
   const [maintenances, setMaintenances] = useState<Maintenance[]>([])
   const [filteredMaintenances, setFilteredMaintenances] = useState<Maintenance[]>([])
   const [equipments, setEquipments] = useState<Map<string, Equipment>>(new Map())
@@ -34,37 +37,23 @@ export default function HistoryPage() {
   const [filterOperadora, setFilterOperadora] = useState("")
   const [filterDateFrom, setFilterDateFrom] = useState("")
   const [filterDateTo, setFilterDateTo] = useState("")
+  const [procedureId, setProcedureId] = useState<string | null>(null)
+  useEffect(() => { setProcedureId(new URLSearchParams(window.location.search).get("manutencao")) }, [])
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        const [maintenancesData, equipmentsData, operatorsData, usersData] = await Promise.all([
-          getAllMaintenances(),
-          getEquipments(),
-          getOperators(),
-          getUsers(),
-        ])
-
-        setMaintenances(maintenancesData)
-        setFilteredMaintenances(maintenancesData)
-
-        const equipmentMap = new Map<string, Equipment>()
-        equipmentsData.forEach((e) => equipmentMap.set(e.numeroRemota, e))
-        setEquipments(equipmentMap)
-
-        setOperators(operatorsData.filter((o) => o.ativo))
-        setTechnicians(usersData.filter((u) => u.tipo === "tecnico" || u.tipo === "admin"))
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
-    loadData()
-  }, [])
+    setMaintenances(live.maintenances)
+    setEquipments(new Map(live.equipments.map((item) => [item.numeroRemota, item])))
+    setOperators(live.operators.filter((item) => item.ativo))
+    setLoading(live.loading)
+  }, [live.maintenances, live.equipments, live.operators, live.loading])
+  useEffect(() => {
+    const names = new Map(live.maintenances.map((item) => [item.tecnicoId, item.tecnicoNome]))
+    setTechnicians([...names].map(([id, nome]) => ({ id, nome, username: "", tipo: "tecnico", ativo: true, criadoEm: new Date(0) })))
+  }, [live.maintenances])
 
   useEffect(() => {
     let filtered = [...maintenances]
+    if (procedureId) filtered = filtered.filter((item) => item.id === procedureId)
 
     if (filterNumero.trim()) {
       filtered = filtered.filter((m) =>
@@ -101,7 +90,7 @@ export default function HistoryPage() {
     }
 
     setFilteredMaintenances(filtered)
-  }, [filterNumero, filterModelo, filterTecnico, filterOperadora, filterDateFrom, filterDateTo, maintenances, equipments])
+  }, [filterNumero, filterModelo, filterTecnico, filterOperadora, filterDateFrom, filterDateTo, maintenances, equipments, procedureId])
 
   const clearFilters = () => {
     setFilterNumero("")
@@ -182,6 +171,7 @@ export default function HistoryPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {procedureId && <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm"><span>Manutenção vinculada ao envio para garantia</span><Button variant="outline" size="sm" onClick={() => { setProcedureId(null); router.replace("/historico") }}>Ver todo o histórico</Button></div>}
           {showFilters && (
             <div className="mb-6 rounded-lg border bg-muted/30 p-4">
               <div className="mb-4 flex items-center justify-between">

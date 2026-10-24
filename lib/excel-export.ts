@@ -19,7 +19,7 @@ export function exportMaintenancesToExcel(
       Modelo: equipment?.modelo || "-",
       "Ano de Fabricação": equipment?.anoFabricacao || "-",
       OCM: equipment?.lote || "-",
-      "Situação da Remota": equipment?.situacaoRemota || "-",
+      "Situação após Manutenção": m.situacaoRemota || "Sem situação registrada",
       "Operadora Antes": m.operadoraAntes,
       "Operadora Depois": m.operadoraDepois,
       "Defeito Relatado": m.defeitoRelatado === "Outro" 

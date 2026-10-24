@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -47,7 +47,7 @@ export default function UsersPage() {
   const [changingPasswordUser, setChangingPasswordUser] = useState<User | null>(null)
   const [deletingUser, setDeletingUser] = useState<User | null>(null)
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       const data = await getUsers()
       setUsers(data)
@@ -56,11 +56,13 @@ export default function UsersPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    loadUsers()
-  }, [])
+    void loadUsers()
+    const interval = setInterval(() => { void loadUsers() }, 15_000)
+    return () => clearInterval(interval)
+  }, [loadUsers])
 
   const handleUserCreated = () => {
     setShowNewDialog(false)

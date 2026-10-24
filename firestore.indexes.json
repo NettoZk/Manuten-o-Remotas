@@ -1,0 +1,6 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "login_attempts", "fieldPath": "expiresAt", "ttl": true, "indexes": [] }
+  ]
+}
