@@ -16,7 +16,7 @@ export function calculateDashboard(equipments: Equipment[], maintenances: Mainte
   const active = equipments.filter((equipment) => equipment.estadoRegistro !== "inativo")
   const completed = maintenances.filter((item) => item.status === "finalizada" && item.dataFinalizacao && monthKey(item.dataFinalizacao) === selectedMonth)
   const technicians = new Map<string, number>()
-  for (const item of maintenances) technicians.set(item.tecnicoNome || "Desconhecido", (technicians.get(item.tecnicoNome || "Desconhecido") || 0) + 1)
+  for (const item of maintenances) if (item.status !== "cancelada") technicians.set(item.tecnicoNome || "Desconhecido", (technicians.get(item.tecnicoNome || "Desconhecido") || 0) + 1)
   const [year, month] = monthKey(now).split("-").map(Number)
   const months = Array.from({ length: 6 }, (_, index) => {
     const date = new Date(Date.UTC(year, month - 6 + index, 1))
@@ -24,7 +24,7 @@ export function calculateDashboard(equipments: Equipment[], maintenances: Mainte
     return { mes: new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }).format(date), total: maintenances.filter((item) => item.status === "finalizada" && item.dataFinalizacao && monthKey(item.dataFinalizacao) === key).length }
   })
   return {
-    totalEquipments: active.length, totalMaintenances: maintenances.length,
+    totalEquipments: active.length, totalMaintenances: maintenances.filter((item) => item.status !== "cancelada").length,
     inProgress: maintenances.filter((item) => item.status === "em_andamento").length,
     completedThisMonth: completed.length,
     recentMaintenances: maintenances.slice(0, 5),

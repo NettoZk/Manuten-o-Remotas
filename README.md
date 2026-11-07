@@ -29,6 +29,15 @@ Na Vercel, configure as variáveis no projeto e ambiente correspondente e faça 
 - Atendimentos novos guardam uma cópia dos dados cadastrais. Modelo/OCM alterados depois não mudam essa evidência. Legado aberto recebe captura identificada na conclusão; campos históricos ausentes não são inventados.
 - Rascunhos aceitam dados incompletos e são salvos automaticamente ou por botão, pelo responsável. Versões concorrentes são rejeitadas. A recuperação local tem validade de 7 dias; preserve o texto antes de carregar outra versão.
 - Lotes: até 500 linhas, chamadas de até 20 operações e 28.000 bytes, corpo máximo 32.768 bytes. Confira prévia e resultado por remota. O último lote pode ser consultado por 7 dias. Itens sem confirmação exigem conferência e não são reenviados automaticamente.
+- Cancelar abertura registra atendimento cancelado, justificativa e autor, sem contabilizar serviço. Administrador pode transferir atendimento a um técnico/administrador ativo, preservando abertura e rascunho. Remova o acesso do responsável somente depois de resolver suas pendências; perfis com histórico devem ser desativados.
+- Administrador pode retificar conclusão técnica, preservando original e revisões. Alterar o resultado operacional exige que não exista movimentação posterior incompatível. Arquivamento manual pode ser reativado com motivo; originais substituídas e cadastros invalidados usam o procedimento de retorno.
+- Corrigir confirmação de envio exige declarar que não houve saída física. Equipamento que saiu segue o retorno da garantia. Retificar retorno permite corrigir IMEI e vínculos antes de atividade posterior; a operação conserva as revisões e identifica cadastros invalidados. Legado sem versão segura não recebe reversão automática.
+- Em **Lotes**, consulte os últimos 50 ou um identificador anterior, exporte o resultado e confira antes/depois por item. Cada bloco conserva IMEI informado, linha original e identificador comum da execução, inclusive nos impedimentos. Correções simples de importação/cadastro exigem ausência de movimento posterior. Manutenção, arquivamento e garantia oferecem seus procedimentos específicos; nunca desfazer todo um lote indiscriminadamente. O histórico durável não vence com o comprovante de 7 dias.
+- **Destino e recebimento** registra saída para polo/estoque, destino e responsável previsto. Enquanto em trânsito, manutenção, edição e arquivamento ficam bloqueados. A confirmação registra data e usuário do recebimento e aplica a situação de disponibilização ativa correspondente. As duas ações aceitam dados comuns ou planilha em massa.
+- Remota com histórico de movimentação física é arquivada, preservando o cadastro e o IMEI, mesmo sem manutenção ou garantia. As revisões de manutenção e retorno apresentam também complementos Outro e dados cadastrais alterados, com original e novo valor.
+- **Pendências** organiza avaliação, conclusão, envio, retorno e recebimento, com antiguidade, etapa e responsável. Datas ausentes são explícitas; Triagem sem data de mudança informa quando usa o cadastro como referência. Não há SLA automático. A seleção permite executar uma etapa em massa conforme o perfil.
+- **Reincidência** acompanha duas ou mais conclusões técnicas em 30/90/180/365 dias, com defeitos repetidos e links aos atendimentos. Cancelamentos e encerramentos forçados ficam fora. Cada cadastro físico é avaliado separadamente; o indicador não determina sucateamento.
+- A prévia recolhível de importação/movimentação mostra valores atuais, propostos e efeitos do procedimento. A execução valida a versão conferida; alteração posterior exige validar novamente a linha. Correções operacionais valem na data do registro e não reescrevem silenciosamente fechamentos mensais anteriores.
 
 ## Arquitetura e consultas
 
@@ -43,6 +52,8 @@ O dashboard conta todas as remotas ativas no período, independentemente de manu
 ## Campos novos e índices
 
 Alterações aditivas, sem renomear OCM/coleções. `maintenances` aceita `equipmentSnapshot`, `draft`, `draftVersion`, `draftUpdatedAt`, `draftUpdatedBy`. A coleção privada `bulk_runs` guarda usuário, hash e resultados por item; `expiresAt` controla validade de 7 dias. Uma interrupção entre operação e confirmação pode deixar resultado incerto: confira o cadastro antes de repetir.
+
+As onze melhorias acrescentam `operationVersion`/`lastChangeId`, diário privado `operational_changes`, `maintenance_revisions`, `maintenance_transfers`, `warranty_revisions`, `operation_batches` (itens em subcoleção) e `equipment_movements`. São criados sob demanda pelas operações do servidor. `placement` representa destino e trânsito; não substitui condição técnica. Essas coleções permanecem privadas pelas regras existentes, com leitura autorizada via API. A consulta de reincidência seleciona somente os campos necessários, por data de conclusão ou por cadastro. Nenhum script de migração toca o Firebase oficial nesta entrega.
 
 `firestore.indexes.json` contém índice da timeline (`audit_logs`: equipmentId/at) e TTL dos comprovantes. Enquanto o índice estiver indisponível, a timeline usa fallback restrito à remota. Comprovantes vencidos são recusados mesmo antes da limpeza física. Para limpeza automática, habilite/publique TTL no Firebase de destino. Deploy da Vercel não publica índices/regras/TTL. Revise o projeto escolhido antes de usar `firebase deploy --only firestore:rules,firestore:indexes`.
 
@@ -65,8 +76,8 @@ O build testa `firebase-admin/auth` e `firebase-admin/firestore` com `--no-exper
 
 ## Documentação
 
-- Revisão: `docs/reviews/2026-11-06-reanalise.md`.
-- Escopo/plano: `docs/superpowers/specs/2026-11-06-seis-melhorias-design.md` e `docs/superpowers/plans/2026-11-06-seis-melhorias.md`.
-- POP: `output/pdf/POP_Manutencao_Remotas_Rev05.pdf`.
+- Entregas: `docs/reviews/2026-11-07-onze-melhorias.md`.
+- Escopo/plano: `docs/superpowers/specs/2026-11-07-onze-melhorias-design.md` e `docs/superpowers/plans/2026-11-07-onze-melhorias.md`.
+- POP: `POP/POP_Sistema_de_Manutencao_de_Remotas.pdf` (revisão 06); fonte reproduzível em `scripts/generate-pop.py`.
 
 Homologue as mudanças antes de integrar a branch de testes à principal. Esta entrega não publica configurações nem altera dados oficiais.

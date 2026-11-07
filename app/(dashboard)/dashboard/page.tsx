@@ -456,7 +456,7 @@ export default function DashboardPage() {
                       )} />
                       {maintenance.status === "finalizada"
                         ? "Finalizada"
-                        : "Em andamento"}
+                        : maintenance.status === "cancelada" ? "Cancelada" : "Em andamento"}
                     </span>
                   </div>
                 </div>

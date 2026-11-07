@@ -72,17 +72,18 @@ export async function dashboardMetrics(month: string) {
   const completed = async (key: string) => { const [from, to] = monthBounds(key); return count(records.where("dataFinalizacao", ">=", from).where("dataFinalizacao", "<", to)) }
   const [year, number] = monthKey(new Date()).split("-").map(Number)
   const keys = Array.from({ length: 6 }, (_, index) => { const date = new Date(Date.UTC(year, number - 6 + index, 1)); return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}` })
-  const [totalMaintenances, inProgress, completedThisMonth, recent, months] = await Promise.all([
-    count(records), count(records.where("status", "==", "em_andamento")), completed(month), records.orderBy("dataEntrada", "desc").limit(5).get(),
+  const [registeredMaintenances, cancelledMaintenances, inProgress, completedThisMonth, recent, months] = await Promise.all([
+    count(records), count(records.where("status", "==", "cancelada")), count(records.where("status", "==", "em_andamento")), completed(month), records.orderBy("dataEntrada", "desc").limit(5).get(),
     Promise.all(keys.map(async (key) => ({ mes: new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }).format(new Date(`${key}-01T12:00:00Z`)), total: await completed(key) }))),
   ])
-  return { totalMaintenances, inProgress, completedThisMonth, recentMaintenances: recent.docs.map((doc) => serializeRecord({ ...doc.data(), id: doc.id })), manutencoesPorMes: months }
+  return { totalMaintenances: registeredMaintenances - cancelledMaintenances, cancelledMaintenances, inProgress, completedThisMonth, recentMaintenances: recent.docs.map((doc) => serializeRecord({ ...doc.data(), id: doc.id })), manutencoesPorMes: months }
 }
 export async function technicianTotals() {
-  const docs = await getAdmin().db.collection("maintenances").select("tecnicoId", "tecnicoNome").get()
+  const docs = await getAdmin().db.collection("maintenances").select("tecnicoId", "tecnicoNome", "status").get()
   const totals = new Map<string, { id: string; name: string; total: number }>()
   for (const doc of docs.docs) {
     const data = doc.data()
+    if (data.status === "cancelada") continue
     const id = String(data.tecnicoId || "desconhecido")
     const old = totals.get(id)
     totals.set(id, { id, name: String(data.tecnicoNome || "Desconhecido"), total: (old?.total || 0) + 1 })

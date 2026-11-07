@@ -2,16 +2,19 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import type { Maintenance } from "@/lib/types"
+import type { Maintenance, Equipment } from "@/lib/types"
+import { MaintenanceActions } from "@/components/maintenance-actions"
+import { MaintenanceRevisionHistory } from "@/components/maintenance-rectification"
 import { History, Clock, CheckCircle, AlertTriangle } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
 interface MaintenanceHistoryProps {
   history: Maintenance[]
+  equipment?: Equipment
 }
 
-export function MaintenanceHistory({ history }: MaintenanceHistoryProps) {
+export function MaintenanceHistory({ history, equipment }: MaintenanceHistoryProps) {
   if (history.length === 0) {
     return (
       <Card className="border-border/50 bg-card">
@@ -87,12 +90,16 @@ export function MaintenanceHistory({ history }: MaintenanceHistoryProps) {
                         ? "Finalização Forçada"
                         : maintenance.status === "finalizada"
                         ? "Finalizada"
-                        : "Em andamento"}
+                        : maintenance.status === "cancelada" ? "Cancelada" : "Em andamento"}
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     Tecnico: <span className="text-foreground">{maintenance.tecnicoNome}</span>
                   </p>
+                  {maintenance.status === "cancelada" && <p className="text-sm text-muted-foreground">Cancelamento por {maintenance.canceladaPor || "responsável"}: {maintenance.motivoCancelamento}</p>}
+                  {!!maintenance.transferCount && <p className="text-xs text-muted-foreground">Abertura registrada por {maintenance.tecnicoAberturaNome}. Responsável atual após {maintenance.transferCount} transferência(s): {maintenance.tecnicoNome}. Motivo: {maintenance.motivoTransferencia}</p>}
+                  {equipment && maintenance.status === "finalizada" && <MaintenanceActions equipment={equipment} maintenance={maintenance} />}
+                  <MaintenanceRevisionHistory maintenance={maintenance} />
                   {maintenance.finalizadoForcadamente && (
                     <div className="rounded bg-destructive/5 border border-destructive/20 px-2 py-1 text-xs">
                       <span className="text-destructive font-medium">Finalizado forçadamente por {maintenance.finalizadoForcadoNome}</span>

@@ -269,7 +269,7 @@ export default function HistoryPage() {
                           >
                             {maintenance.status === "finalizada"
                               ? "Finalizada"
-                              : "Em andamento"}
+                              : maintenance.status === "cancelada" ? "Cancelada" : "Em andamento"}
                           </Badge>
                         </td>
                       </tr>

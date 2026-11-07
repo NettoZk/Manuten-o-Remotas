@@ -14,10 +14,12 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
-import { createEquipment, getEquipmentByNumber, updateEquipment } from "@/lib/services"
-import type { EquipmentStatus } from "@/lib/types"
+import { getEquipmentByNumber, runBulkMovements } from "@/lib/services"
+import type { Equipment, EquipmentStatus } from "@/lib/types"
+import type { BulkCommand } from "@/lib/bulk-movements"
 import { equipmentTemplate, parseEquipmentRow } from "@/lib/equipment-import"
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle, Download } from "lucide-react"
+import { MovementChangePreview } from "@/components/movement-change-preview"
 
 interface ImportRow {
   numeroRemota: string
@@ -31,6 +33,7 @@ interface ImportRow {
 }
 
 interface ValidationResult {
+  equipment?: Equipment
   row: number
   data: ImportRow
   isValid: boolean
@@ -42,6 +45,11 @@ interface ImportEquipmentDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onImported: () => void
+}
+function importCommand(item: ValidationResult): BulkCommand {
+  const { numeroRemota, ...data } = item.data
+  return { number: numeroRemota, sourceRow: item.row, operation: item.equipment ? "updateEquipment" : "createEquipment", ...(item.equipment ? { expectedVersion: item.equipment.operationVersion || 0 } : {}),
+    args: item.equipment ? [item.equipment.id, { ...data, observacoes: data.observacoes || "" }] : [{ ...item.data, observacoes: data.observacoes || "" }] }
 }
 
 export function ImportEquipmentDialog({
@@ -61,8 +69,10 @@ export function ImportEquipmentDialog({
     const { numeroRemota } = data
     // Verificar se já existe
     let exists = false
+    let equipment: Equipment | undefined
     if (numeroRemota) {
       const existing = await getEquipmentByNumber(numeroRemota)
+      equipment = existing || undefined
       exists = !!existing
       if (existing?.estadoRegistro === "inativo") errors.push("Esta remota está arquivada")
       if (existing?.garantia?.status === "separada") errors.push("Confirme o envio ou cancele a separação antes de importar alterações")
@@ -76,6 +86,7 @@ export function ImportEquipmentDialog({
       isValid: errors.length === 0 && numeroRemota !== "",
       errors,
       exists,
+      equipment,
     }
   }
 
@@ -93,6 +104,7 @@ export function ImportEquipmentDialog({
       const sheetName = workbook.SheetNames[0]
       const worksheet = workbook.Sheets[sheetName]
       const jsonData = XLSX.utils.sheet_to_json(worksheet)
+      if (jsonData.length > 500) throw new Error("Importe até 500 linhas por arquivo")
 
       if (jsonData.length === 0) {
         toast.error("A planilha está vazia")
@@ -135,46 +147,13 @@ export function ImportEquipmentDialog({
     let failed = 0
     const failedItems: ValidationResult[] = []
 
-    for (let i = 0; i < validItems.length; i++) {
-      const item = validItems[i]
-      setImportProgress({ current: i + 1, total: validItems.length })
-
-      try {
-        if (item.exists) {
-          // Atualizar existente
-          const existing = await getEquipmentByNumber(item.data.numeroRemota)
-          if (existing) {
-            await updateEquipment(existing.id, {
-              modelo: item.data.modelo,
-              anoFabricacao: item.data.anoFabricacao,
-              lote: item.data.lote,
-              operadoraAtual: item.data.operadoraAtual,
-              status: item.data.status,
-              situacaoRemota: item.data.situacaoRemota,
-              observacoes: item.data.observacoes || "",
-            })
-            updated++
-          } else { throw new Error("Equipamento removido durante a importação") }
-        } else {
-          // Criar novo
-          await createEquipment({
-            numeroRemota: item.data.numeroRemota,
-            modelo: item.data.modelo,
-            anoFabricacao: item.data.anoFabricacao,
-            lote: item.data.lote,
-            operadoraAtual: item.data.operadoraAtual,
-            status: item.data.status,
-            situacaoRemota: item.data.situacaoRemota,
-            observacoes: item.data.observacoes || "",
-          })
-          created++
-        }
-      } catch (error) {
-        console.error(`[v0] Erro ao importar remota ${item.data.numeroRemota}:`, error)
-        failed++
-        failedItems.push({ ...item, isValid: false, errors: [error instanceof Error ? error.message : "Falha ao gravar esta linha"] })
-      }
-    }
+    const commands = validItems.map(importCommand)
+    const results = await runBulkMovements(commands, (current) => setImportProgress({ current, total: validItems.length }))
+    results.forEach((result, index) => {
+      const item = validItems[index]
+      if (result.ok) { if (item.exists) updated++; else created++ }
+      else { failed++; failedItems.push({ ...item, isValid: false, errors: [result.error || "Consulte o resultado do lote antes de repetir"] }) }
+    })
 
     setIsImporting(false)
     
@@ -361,6 +340,7 @@ export function ImportEquipmentDialog({
                         </td>
                         <td className="px-3 py-2 text-destructive text-xs">
                           {result.errors.join("; ")}
+                          {result.isValid && <MovementChangePreview equipment={result.equipment} command={importCommand(result)} />}
                         </td>
                       </tr>
                     ))}

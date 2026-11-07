@@ -15,6 +15,7 @@ import type { Equipment, Maintenance, Defect } from "@/lib/types"
 import { NewEquipmentDialog } from "@/components/new-equipment-dialog"
 import { MaintenanceForm } from "@/components/maintenance-form"
 import { EquipmentInfo } from "@/components/equipment-info"
+import { MaintenanceActions } from "@/components/maintenance-actions"
 import { MaintenanceHistory } from "@/components/maintenance-history"
 import { useEquipmentMaintenanceHistory } from "@/hooks/use-equipment-maintenance-history"
 import { ForceFinishedDialog } from "@/components/force-finalize-dialog"
@@ -31,7 +32,7 @@ export default function MaintenancePage() {
   const [selectedEquipmentId, setSelectedEquipmentId] = useState<string | null>(null)
   const equipment = live.equipments.find((item) => item.id === selectedEquipmentId) || null
   const initialSearchApplied = useRef(false)
-  const history = useEquipmentMaintenanceHistory(equipment?.numeroRemota)
+  const history = useEquipmentMaintenanceHistory(equipment?.numeroRemota, equipment?.operationVersion)
   const maintenanceHistory = history.records
   const currentMaintenance = maintenanceHistory.find((item) => item.status === "em_andamento") || null
   const defects = live.defects.filter((item) => item.ativo)
@@ -297,6 +298,7 @@ export default function MaintenancePage() {
           )}
 
           <EquipmentInfo equipment={equipment} />
+          {currentMaintenance && <MaintenanceActions maintenance={currentMaintenance} equipment={equipment} />}
 
           {viewMode === "edit" && equipment.estadoRegistro !== "inativo" && (
             <>
@@ -408,7 +410,7 @@ export default function MaintenancePage() {
             </>
           )}
 
-          {history.loading ? <p role="status" className="text-sm">Carregando histórico…</p> : history.error ? <p role="alert" className="text-sm text-destructive">Não foi possível carregar o histórico. <button className="underline" onClick={history.retry}>Tentar novamente</button></p> : <MaintenanceHistory history={maintenanceHistory} />}
+          {history.loading ? <p role="status" className="text-sm">Carregando histórico…</p> : history.error ? <p role="alert" className="text-sm text-destructive">Não foi possível carregar o histórico. <button className="underline" onClick={history.retry}>Tentar novamente</button></p> : <MaintenanceHistory history={maintenanceHistory} equipment={equipment || undefined} />}
         </>
       )}
 

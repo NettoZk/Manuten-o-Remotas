@@ -17,10 +17,13 @@ import {
 } from "lucide-react"
 
 const navigation = [
+  { name: "Pendências", href: "/pendencias", icon: Wrench, roles: ["admin", "tecnico", "usuario"] },
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ["admin", "tecnico", "usuario"] },
   { name: "Manutencao", href: "/manutencao", icon: Wrench, roles: ["admin", "tecnico"] },
   { name: "Equipamentos", href: "/equipamentos", icon: Radio, roles: ["admin", "tecnico", "usuario"] },
   { name: "Historico", href: "/historico", icon: History, roles: ["admin", "tecnico", "usuario"] },
+  { name: "Lotes", href: "/lotes", icon: History, roles: ["admin", "tecnico"] },
+  { name: "Reincidência", href: "/reincidencia", icon: Wrench, roles: ["admin", "tecnico", "usuario"] },
   { name: "Usuarios", href: "/usuarios", icon: Users, roles: ["admin"] },
   { name: "Listas", href: "/listas", icon: Settings, roles: ["admin"] },
 ]

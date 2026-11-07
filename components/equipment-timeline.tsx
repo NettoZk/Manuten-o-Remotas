@@ -3,8 +3,14 @@ import { useState } from "react"
 import { getEquipmentMovements, type EquipmentMovement, type PageCursor } from "@/lib/services"
 import { Button } from "@/components/ui/button"
 const labels: Record<string, string> = {
+  physical_dispatched: "Movimentação física para destino", physical_received: "Recebimento no destino confirmado", batch_item_reversed: "Item de lote corrigido",
+  warranty_dispatch_corrected: "Confirmação de envio corrigida sem saída física", warranty_return_rectified: "Retorno da garantia retificado",
   equipment_created: "Cadastro da remota", equipment_updated: "Cadastro / situação atualizados", equipment_archived: "Remota arquivada",
+  equipment_restored: "Remota reativada após arquivamento manual",
   maintenance_started: "Manutenção iniciada", maintenance_finalized: "Manutenção concluída", maintenance_forced: "Manutenção encerrada pelo administrador",
+  maintenance_cancelled: "Abertura de manutenção cancelada",
+  maintenance_rectified: "Conclusão de manutenção retificada",
+  maintenance_transferred: "Responsabilidade da manutenção transferida",
   warranty_prepared: "Separada para garantia", warranty_sent: "Enviada para garantia", warranty_returned: "Retorno da garantia", warranty_preparation_cancelled: "Separação cancelada",
 }
 export function EquipmentTimeline({ equipmentId }: { equipmentId: string }) {

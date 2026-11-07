@@ -13,7 +13,7 @@ export async function getBulkReceipt(runId: string, userId: string) {
   const results: BulkResult[] = Array.from({ length: data.count }, (_, index) => data.results[index] || { ok: false, uncertain: true, error: "Resultado ainda não confirmado. Consulte o cadastro antes de repetir" })
   return { state: data.state as string, results }
 }
-export async function reserveBulkRun(runId: string, userId: string, entries: unknown[]) {
+export async function reserveBulkRun(runId: string, userId: string, entries: unknown[], userName = "", executionId = runId) {
   const ref = getAdmin().db.collection("bulk_runs").doc(runId)
   const hash = createHash("sha256").update(JSON.stringify(entries)).digest("hex")
   const created = await getAdmin().db.runTransaction(async (tx) => {
@@ -24,6 +24,9 @@ export async function reserveBulkRun(runId: string, userId: string, entries: unk
       return false
     }
     tx.create(ref, { userId, hash, count: entries.length, results: [], state: "processing", createdAt: Timestamp.now(), expiresAt: Timestamp.fromMillis(Date.now() + 7 * 86400000) })
+    const durable = getAdmin().db.collection("operation_batches").doc(runId)
+    tx.create(durable, { userId, userName, executionId, count: entries.length, state: "processing", createdAt: Timestamp.now() })
+    entries.forEach((entry, row) => tx.create(durable.collection("items").doc(String(row)), { ...(entry as object), row, ok: false, uncertain: true, error: "Aguardando confirmação do processamento" }))
     return true
   })
   return { ref, created }

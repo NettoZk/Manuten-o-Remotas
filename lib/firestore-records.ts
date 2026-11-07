@@ -12,6 +12,7 @@ type RecordDoc = Pick<QueryDocumentSnapshot<DocumentData>, "id" | "data">
 export function equipmentFromDoc(doc: RecordDoc): Equipment {
   const data = doc.data()
   return { ...data, id: doc.id, situacaoRemota: operationalSituation(data.situacaoRemota), dataCadastro: date(data.dataCadastro) || new Date(0),
+    placement: data.placement ? { ...data.placement, sentAt: date(data.placement.sentAt), receivedAt: date(data.placement.receivedAt) } : undefined,
     situacaoAtualizadaEm: date(data.situacaoAtualizadaEm), ultimaEdicaoEm: date(data.ultimaEdicaoEm),
     arquivadoEm: date(data.arquivadoEm), emManutencaoDesde: date(data.emManutencaoDesde),
     garantia: data.garantia ? { ...data.garantia, separadaEm: date(data.garantia.separadaEm), enviadaEm: date(data.garantia.enviadaEm), retornadaEm: date(data.garantia.retornadaEm), canceladaEm: date(data.garantia.canceladaEm) } : undefined,
@@ -21,6 +22,6 @@ export function equipmentFromDoc(doc: RecordDoc): Equipment {
 }
 export function maintenanceFromDoc(doc: RecordDoc): Maintenance {
   const data = doc.data()
-  return { ...data, id: doc.id, draftUpdatedAt: date(data.draftUpdatedAt), dataEntrada: date(data.dataEntrada) || new Date(0), dataFinalizacao: date(data.dataFinalizacao) || null,
+  return { ...data, id: doc.id, retificadaEm: date(data.retificadaEm), canceladaEm: date(data.canceladaEm), draftUpdatedAt: date(data.draftUpdatedAt), dataEntrada: date(data.dataEntrada) || new Date(0), dataFinalizacao: date(data.dataFinalizacao) || null,
     equipmentSnapshot: data.equipmentSnapshot ? { ...data.equipmentSnapshot, capturedAt: date(data.equipmentSnapshot.capturedAt) } : undefined } as Maintenance
 }

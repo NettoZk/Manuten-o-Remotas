@@ -36,6 +36,13 @@ async function openMaintenance() {
   const maintenanceId = await executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech) as string
   return { id, maintenanceId }
 }
+async function sentWarranty() {
+  const { id, maintenanceId } = await openMaintenance()
+  await executeOperation("finalizeMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Separado para garantia", motivoGarantia: "Falha persistente constatada após avaliação técnica" }], tech)
+  const warrantyId = (await db.collection("equipments").doc(id).get()).data()!.garantia.id
+  await executeOperation("sendWarranty", [id, warrantyId], tech)
+  return { id, maintenanceId, warrantyId }
+}
 beforeEach(async () => {
   for (const url of ["http://127.0.0.1:8181/emulator/v1/projects/demo-remotas-history/databases/(default)/documents", "http://127.0.0.1:9199/emulator/v1/projects/demo-remotas-history/accounts"]) expect((await fetch(url, { method: "DELETE" })).ok).toBe(true)
   const hash = await bcrypt.hash("teste1234", 4)
@@ -93,6 +100,102 @@ describe("login, sessão e autorização real da API", () => {
 })
 
 describe("cadastros, referências e administração", () => {
+  it("lote impedido conserva IMEI informado e linha da planilha sem depender de diário de sucesso", async () => {
+    const runId = "cbb12804-84bf-4aa3-b7e6-259c936cb22e"
+    await executeOperation("bulkMovements", [[{ operation: "archiveEquipment", args: ["inexistente"], number: "QA-REMOTA-IMPEDIDA", sourceRow: 42 }], runId], admin)
+    const items = await executeOperation("getBatchItems", [runId], admin) as { number: string; sourceRow: number; ok: boolean }[]
+    expect(items[0]).toMatchObject({ number: "QA-REMOTA-IMPEDIDA", sourceRow: 42, ok: false })
+  })
+  it("exclusão preserva equipamento com histórico físico após o recebimento", async () => {
+    await db.collection("equipment_status").doc("estoque").set({ nome: "Disponibilizado para estoque", ativo: true })
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    await executeOperation("dispatchEquipment", [id, { type: "estoque", destination: "Estoque central", recipientName: "Equipe responsável" }, 1], tech)
+    const eq = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("receiveEquipment", [id, eq.placement.id, "Recebido no estoque", eq.operationVersion], tech)
+    await db.collection("equipments").doc(id).update({ placement: FieldValue.delete() })
+    expect(await executeOperation("hasEquipmentHistory", [id], admin)).toBe(true)
+    await expect(executeOperation("deleteEquipment", [id], admin)).rejects.toThrow("histórico")
+    expect((await db.collection("equipments").doc(id).get()).exists).toBe(true)
+    await executeOperation("archiveEquipment", [id], admin)
+    expect((await db.collection("equipments").doc(id).get()).data()!.estadoRegistro).toBe("inativo")
+  })
+  it("histórico do lote preserva os dados técnicos anteriores e os da conclusão confirmada", async () => {
+    const { id, maintenanceId } = await openMaintenance(), runId = "81b3c535-3dca-45bc-8f3e-15a5a30ce027"
+    const result = await executeOperation("bulkMovements", [[{ operation: "finalizeMaintenance", args: [maintenanceId, id, { ...conclusion, observacoes: "Conclusão técnica conferida no lote" }] }], runId], tech) as { ok: boolean }[]
+    expect(result[0].ok).toBe(true)
+    const items = await executeOperation("getBatchItems", [runId], admin) as { procedure: { before: { status: string }; after: { status: string; observacoes: string } } }[]
+    expect(items[0].procedure.before.status).toBe("em_andamento")
+    expect(items[0].procedure.after.status).toBe("finalizada")
+    expect(items[0].procedure.after.observacoes).toBe("Conclusão técnica conferida no lote")
+  })
+  it("recusa prévia antiga do lote e mantém a edição posterior intacta", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    const version = (await db.collection("equipments").doc(id).get()).data()!.operationVersion
+    await executeOperation("updateEquipment", [id, { modelo: "Modelo conferido por outra pessoa" }], admin)
+    const result = await executeOperation("bulkMovements", [[{ operation: "updateEquipmentSituationManual", args: [id, { situacaoRemota: "Recuperada" }], expectedVersion: version }]], admin) as { ok: boolean; error?: string }[]
+    expect(result[0].ok).toBe(false); expect(result[0].error).toContain("atualizado")
+    const current = (await db.collection("equipments").doc(id).get()).data()!
+    expect(current.situacaoRemota).toBe("Triagem"); expect(current.modelo).toBe("Modelo conferido por outra pessoa")
+  })
+  it("registra destino físico e recebimento identificado sem confundir trânsito com situação técnica", async () => {
+    await db.collection("equipment_status").doc("estoque").set({ nome: "Disponibilizado para estoque", ativo: true })
+    const id = await executeOperation("createEquipment", [equipment], admin) as string, ref = db.collection("equipments").doc(id)
+    await expect(executeOperation("dispatchEquipment", [id, { type: "estoque", destination: "", recipientName: "Equipe estoque" }, 1], tech)).rejects.toThrow()
+    await executeOperation("dispatchEquipment", [id, { type: "estoque", destination: "Almoxarifado central", recipientName: "Equipe estoque" }, 1], tech)
+    const transit = (await ref.get()).data()!
+    expect(transit.situacaoRemota).toBe("Triagem"); expect(transit.placement.status).toBe("em_transito")
+    await expect(executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech)).rejects.toThrow("trânsito")
+    await expect(executeOperation("archiveEquipment", [id], admin)).rejects.toThrow("trânsito")
+    await expect(executeOperation("updateEquipment", [id, { modelo: "Outro" }], admin)).rejects.toThrow("trânsito")
+    await executeOperation("receiveEquipment", [id, transit.placement.id, "Recebido e conferido pela equipe do estoque", transit.operationVersion], tech)
+    const received = (await ref.get()).data()!
+    expect(received.placement.status).toBe("recebida"); expect(received.placement.receivedBy).toBe(tech.nome)
+    expect(received.situacaoRemota).toBe("Disponibilizado para estoque")
+    const movements = await executeOperation("getPhysicalMovements", [id], viewer) as { origin: string; receivedBy: string }[]
+    expect(movements[0].origin).toBe("Origem não registrada"); expect(movements[0].receivedBy).toBe(tech.nome)
+    await expect(executeOperation("receiveEquipment", [id, transit.placement.id, "Tentativa de recebimento repetido do mesmo equipamento", received.operationVersion], tech)).rejects.toThrow()
+  })
+  it("movimenta e recebe em massa com permissões, impedimentos e resultado por item", async () => {
+    await db.collection("equipment_status").doc("polo").set({ nome: "Disponibilizada para polo", ativo: true })
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    await expect(executeOperation("dispatchEquipment", [id, { type: "polo", destination: "Polo A", recipientName: "Equipe A" }, 1], viewer)).rejects.toThrow("técnicos")
+    const result = await executeOperation("bulkMovements", [[{ operation: "dispatchEquipment", args: [id, { type: "polo", destination: "Polo A", recipientName: "Equipe A" }, 1] }]], tech) as { ok: boolean }[]
+    expect(result[0].ok).toBe(true)
+    const eq = (await db.collection("equipments").doc(id).get()).data()!
+    const received = await executeOperation("bulkMovements", [[{ operation: "receiveEquipment", args: [id, eq.placement.id, "Conferido pelo responsável pelo recebimento", eq.operationVersion] }]], tech) as { ok: boolean }[]
+    expect(received[0].ok).toBe(true)
+  })
+  it("conserva lotes com antes/depois e reverte somente itens sem atividade posterior", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string, runId = "c9114157-aedd-4129-8d09-be9a3cd5db04"
+    await executeOperation("bulkMovements", [[{ operation: "updateEquipmentSituationManual", args: [id, { situacaoRemota: "Recuperada" }] }, { operation: "archiveEquipment", args: ["inexistente"] }], runId], admin)
+    const batches = await executeOperation("getBatchHistory", [], admin) as { id: string }[]
+    expect(batches.some((batch) => batch.id === runId)).toBe(true)
+    const items = await executeOperation("getBatchItems", [runId], admin) as { id: string; before: Record<string, unknown>; after: Record<string, unknown>; ok: boolean }[]
+    const changed = items.find((item) => item.ok)!
+    expect(changed.before.situacaoRemota).toBe("Triagem"); expect(changed.after.situacaoRemota).toBe("Recuperada")
+    expect(items.some((item) => !item.ok)).toBe(true)
+    await executeOperation("reverseBatchItem", [runId, changed.id, "Situação aplicada indevidamente no lote selecionado"], admin)
+    expect((await db.collection("equipments").doc(id).get()).data()!.situacaoRemota).toBe("Triagem")
+    await expect(executeOperation("reverseBatchItem", [runId, changed.id, "Tentativa repetida de correção de um mesmo item"], admin)).rejects.toThrow()
+  })
+  it("importação usa lote durável e recusa estorno após edição posterior", async () => {
+    const runId = "919df346-b607-4cfb-b158-f23176dba6b3"
+    const results = await executeOperation("bulkMovements", [[{ operation: "createEquipment", args: [equipment] }], runId], admin) as { result: string }[]
+    const id = results[0].result
+    const items = await executeOperation("getBatchItems", [runId], admin) as { id: string }[]
+    await executeOperation("updateEquipment", [id, { observacoes: "Conferência posterior do cadastro importado" }], admin)
+    await expect(executeOperation("reverseBatchItem", [runId, items[0].id, "Cadastro importado por engano no lote de demonstração"], admin)).rejects.toThrow("posterior")
+  })
+  it("preserva histórico de um responsável intermediário ao remover seu acesso", async () => {
+    const middle = "tecnico-intermediario"
+    await db.collection("users").doc(middle).set({ nome: "Intermediário", username: "intermedio", tipo: "tecnico", ativo: true })
+    const { id, maintenanceId } = await openMaintenance()
+    let eq = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("transferMaintenance", [maintenanceId, id, middle, "Redistribuição do atendimento durante ausência do técnico", eq.operationVersion], admin)
+    eq = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("transferMaintenance", [maintenanceId, id, tech.id, "Devolução ao responsável que iniciou o atendimento", eq.operationVersion], admin)
+    await expect(executeOperation("deleteUser", [middle], admin)).rejects.toThrow("histórico")
+  })
   it("valida condição e situação após combinar a alteração parcial com o cadastro atual", async () => {
     const id = await executeOperation("createEquipment", [equipment], admin) as string
     await expect(executeOperation("updateEquipment", [id, { situacaoRemota: "Nova" }], admin)).rejects.toThrow("usada")
@@ -156,6 +259,186 @@ describe("cadastros, referências e administração", () => {
 })
 
 describe("procedimentos de manutenção e garantia", () => {
+  it("relatório de reincidência exclui cancelamentos e encerramentos forçados e lista os serviços considerados", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)
+    const second = await executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech)
+    await executeOperation("finalizeMaintenance", [second, id, conclusion], tech)
+    const third = await executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech)
+    await executeOperation("forceFinalizeMaintenance", [third, id, null, null, "Abertura encerrada pelo administrador sem serviço técnico"], admin)
+    const report = await executeOperation("getRecurrenceReport", [30, id], viewer) as { equipmentId: string; count: number; maintenanceIds: string[] }[]
+    expect(report).toHaveLength(1); expect(report[0].count).toBe(2); expect(report[0].maintenanceIds).not.toContain(third)
+    await expect(executeOperation("getRecurrenceReport", [9999], viewer)).rejects.toThrow()
+  })
+  it("retifica número da substituta, preserva cadastro e impede uso de número reservado", async () => {
+    const { id, warrantyId } = await sentWarranty()
+    const data = { ...equipment, garantiaId: warrantyId, numeroRemota: "IMEI-DIGITADO", situacaoRemota: "Recuperada", observacoesRetorno: "Retorno conferido na bancada pela equipe" }
+    await executeOperation("returnWarranty", [id, data], admin)
+    const ref = db.collection("equipments").doc(id), eq = (await ref.get()).data()!, replacementId = eq.substituidaPorId
+    await executeOperation("rectifyWarrantyReturn", [id, warrantyId, { ...data, numeroRemota: "IMEI-CORRETO" }, "Número digitado incorretamente no retorno da garantia", eq.operationVersion], admin)
+    expect((await db.collection("equipments").doc(replacementId).get()).data()!.numeroRemota).toBe("IMEI-CORRETO")
+    expect((await ref.get()).data()!.substituidaPorNumero).toBe("IMEI-CORRETO")
+    const revisions = await executeOperation("getWarrantyRevisions", [warrantyId], admin) as { before: Record<string, unknown> }[]
+    expect(revisions[0].before.novoNumeroRemota).toBe("IMEI-DIGITADO")
+    await executeOperation("createEquipment", [{ ...equipment, numeroRemota: "OUTRO-RESERVADO" }], admin)
+    await expect(executeOperation("rectifyWarrantyReturn", [id, warrantyId, { ...data, numeroRemota: "OUTRO-RESERVADO" }, "Conferência posterior do número informado no retorno", (await ref.get()).data()!.operationVersion], admin)).rejects.toThrow("número")
+  })
+  it("corrige substituição indevida para mesmo IMEI e bloqueia alteração após uso da substituta", async () => {
+    const { id, warrantyId } = await sentWarranty()
+    const data = { ...equipment, garantiaId: warrantyId, numeroRemota: "SUBSTITUTA-ERRO", situacaoRemota: "Recuperada", observacoesRetorno: "Retorno conferido na bancada pela equipe" }
+    await executeOperation("returnWarranty", [id, data], admin)
+    const eq = (await db.collection("equipments").doc(id).get()).data()!, replacementId = eq.substituidaPorId
+    await executeOperation("rectifyWarrantyReturn", [id, warrantyId, { ...data, numeroRemota: equipment.numeroRemota }, "Não houve substituição, o número foi interpretado incorretamente", eq.operationVersion], admin)
+    const current = (await db.collection("equipments").doc(id).get()).data()!
+    expect(current.estadoRegistro).toBe("ativo"); expect(current.substituidaPorId).toBeUndefined()
+    expect((await db.collection("equipments").doc(replacementId).get()).data()!.cadastroAnulado).toBe(true)
+    const reused = await executeOperation("createEquipment", [{ ...equipment, numeroRemota: "SUBSTITUTA-ERRO" }], admin)
+    expect(reused).toBeTruthy()
+    await executeOperation("rectifyWarrantyReturn", [id, warrantyId, { ...data, numeroRemota: "SUBSTITUTA-REAL" }, "Conferência identificou que houve troca de equipamento", current.operationVersion], admin)
+    const updated = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("createMaintenance", [{ equipmentId: updated.substituidaPorId, defeitoRelatado: "Sem comunicação" }], tech)
+    await expect(executeOperation("rectifyWarrantyReturn", [id, warrantyId, data, "Tentativa após abertura de novo atendimento técnico", updated.operationVersion], admin)).rejects.toThrow("posterior")
+  })
+  it("retificação técnica do motivo da separação atualiza a garantia vinculada e preserva o anterior", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const data = { ...conclusion, situacaoRemota: "Separado para garantia", motivoGarantia: "Falha de comunicação que permaneceu após a avaliação" }
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, data], tech)
+    const eq = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("rectifyMaintenance", [maintenanceId, id, { ...data, motivoGarantia: "Falha intermitente confirmada no teste prolongado" }, "Correção da descrição após leitura dos resultados do ensaio", eq.operationVersion], admin)
+    expect((await db.collection("warranties").doc(eq.garantia.id).get()).data()!.motivo).toBe("Falha intermitente confirmada no teste prolongado")
+    expect((await db.collection("equipments").doc(id).get()).data()!.garantia.motivo).toBe("Falha intermitente confirmada no teste prolongado")
+  })
+  it("corrige confirmação de envio sem saída física, preservando o lançamento anterior e voltando à separação", async () => {
+    const { id, warrantyId } = await sentWarranty()
+    const eq = (await db.collection("equipments").doc(id).get()).data()!
+    await expect(executeOperation("correctWarrantyDispatch", [id, warrantyId, "Envio confirmado por engano sem saída física", false, eq.operationVersion], admin)).rejects.toThrow()
+    await expect(executeOperation("correctWarrantyDispatch", [id, warrantyId, "Envio confirmado por engano sem saída física", true, eq.operationVersion], tech)).rejects.toThrow("administradores")
+    await executeOperation("correctWarrantyDispatch", [id, warrantyId, "Envio confirmado por engano sem saída física", true, eq.operationVersion], admin)
+    const current = (await db.collection("equipments").doc(id).get()).data()!
+    expect(current.garantia.status).toBe("separada")
+    expect(current.situacaoRemota).toBe("Separado para garantia")
+    const warranty = (await db.collection("warranties").doc(warrantyId).get()).data()!
+    expect(warranty.enviadaEm).toBeUndefined()
+    const revisions = (await db.collection("warranty_revisions").where("warrantyId", "==", warrantyId).get()).docs.map((doc) => doc.data())
+    expect(revisions[0].before.status).toBe("enviada")
+    expect(revisions[0].before.enviadaEm).toBeDefined()
+    await executeOperation("sendWarranty", [id, warrantyId], tech)
+    expect((await db.collection("warranties").doc(warrantyId).get()).data()!.status).toBe("enviada")
+  })
+  it("bloqueia correção de envio após etapa posterior ou alteração operacional", async () => {
+    const { id, warrantyId } = await sentWarranty()
+    const ref = db.collection("equipments").doc(id), eq = (await ref.get()).data()!
+    await ref.update({ operationVersion: eq.operationVersion + 1 })
+    await expect(executeOperation("correctWarrantyDispatch", [id, warrantyId, "Uma justificativa válida para corrigir este envio", true, eq.operationVersion + 1], admin)).rejects.toThrow("posterior")
+  })
+  it("reativa arquivamento manual conservando o intervalo arquivado no histórico", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    await executeOperation("archiveEquipment", [id], admin)
+    const ref = db.collection("equipments").doc(id), archived = (await ref.get()).data()!
+    await expect(executeOperation("restoreEquipment", [id, "Remota arquivada por engano durante conferência", archived.operationVersion], tech)).rejects.toThrow("administradores")
+    await executeOperation("restoreEquipment", [id, "Remota arquivada por engano durante conferência", archived.operationVersion], admin)
+    const current = (await ref.get()).data()!
+    expect(current.estadoRegistro).toBe("ativo")
+    expect(current.dataCadastro.isEqual(archived.dataCadastro)).toBe(true)
+    expect(current.operationVersion).toBe(archived.operationVersion + 1)
+    expect(current.arquivadoEm).toBeUndefined()
+    const events = (await db.collection("equipment_situation_history").where("equipmentId", "==", id).get()).docs.map((doc) => doc.data()).sort((a, b) => a.version - b.version)
+    expect(events.map((e) => [e.source, e.active])).toEqual([["created", true], ["archived", false], ["restored", true]])
+  })
+  it("não reativa original substituída nem uma prévia desatualizada de arquivamento", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    await executeOperation("archiveEquipment", [id], admin)
+    const ref = db.collection("equipments").doc(id), version = (await ref.get()).data()!.operationVersion
+    await expect(executeOperation("restoreEquipment", [id, "Motivo completo para reativar o equipamento", version + 1], admin)).rejects.toThrow("atualizado")
+    await ref.update({ substituidaPorId: "substituta", substituidaPorNumero: "OUTRO-IMEI" })
+    await expect(executeOperation("restoreEquipment", [id, "Motivo completo para reativar o equipamento", version], admin)).rejects.toThrow("substituída")
+  })
+  it("transfere atendimento e rascunho sem alterar abertura, impedindo gravação pelo responsável anterior", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    await executeOperation("saveMaintenanceDraft", [maintenanceId, id, { ...conclusion, observacoes: "Texto técnico já iniciado pelo primeiro responsável" }, 0], tech)
+    const before = (await db.collection("maintenances").doc(maintenanceId).get()).data()!
+    const version = (await db.collection("equipments").doc(id).get()).data()!.operationVersion
+    await executeOperation("transferMaintenance", [maintenanceId, id, admin.id, "Responsável ausente; administrador continuará a avaliação", version], admin)
+    const after = (await db.collection("maintenances").doc(maintenanceId).get()).data()!
+    expect(after.tecnicoId).toBe(admin.id)
+    expect(after.tecnicoAberturaId).toBe(tech.id)
+    expect(after.dataEntrada.isEqual(before.dataEntrada)).toBe(true)
+    expect(after.draft.observacoes).toBe(before.draft.observacoes)
+    expect(after.draftVersion).toBe(before.draftVersion + 1)
+    expect((await db.collection("equipments").doc(id).get()).data()!.emManutencaoPor).toBe(admin.id)
+    await expect(executeOperation("saveMaintenanceDraft", [maintenanceId, id, before.draft, after.draftVersion], tech)).rejects.toThrow("responsável")
+    await executeOperation("saveMaintenanceDraft", [maintenanceId, id, before.draft, after.draftVersion], admin)
+    await executeOperation("updateUser", [tech.id, { ativo: false }], admin)
+    await expect(executeOperation("deleteUser", [tech.id], admin)).rejects.toThrow("histórico")
+  })
+  it("bloqueia remoção, desativação ou perfil de consulta com atendimento pendente; destino da transferência deve estar ativo", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const version = (await db.collection("equipments").doc(id).get()).data()!.operationVersion
+    for (const [operation, args] of [["deleteUser", [tech.id]], ["updateUser", [tech.id, { ativo: false }]], ["updateUser", [tech.id, { tipo: "usuario" }]]] as const) await expect(executeOperation(operation, [...args], admin)).rejects.toThrow("transfira")
+    await expect(executeOperation("transferMaintenance", [maintenanceId, id, viewer.id, "Tentativa de escolher um destino sem perfil técnico", version], admin)).rejects.toThrow("ativo")
+    await expect(executeOperation("transferMaintenance", [maintenanceId, id, admin.id, "Uma justificativa válida para transferência", version], tech)).rejects.toThrow("administradores")
+  })
+  it("retifica conclusão preservando original, data e snapshot; descrição posterior não muda a situação atual", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)
+    const ref = db.collection("maintenances").doc(maintenanceId)
+    const original = (await ref.get()).data()!
+    let eq = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("rectifyMaintenance", [maintenanceId, id, { ...conclusion, observacoes: "Complemento técnico correto após conferência" }, "Correção de informação digitada durante a conclusão", eq.operationVersion], admin)
+    const corrected = (await ref.get()).data()!
+    expect(corrected.revisionCount).toBe(1)
+    expect(corrected.dataFinalizacao.isEqual(original.dataFinalizacao)).toBe(true)
+    expect(corrected.equipmentSnapshot).toEqual(original.equipmentSnapshot)
+    const revisions = await executeOperation("getMaintenanceRevisions", [maintenanceId], viewer) as { before: { observacoes: string }; after: { observacoes: string } }[]
+    expect(revisions).toHaveLength(1)
+    expect(revisions[0].before.observacoes).toBe("")
+    expect(revisions[0].after.observacoes).toContain("Complemento")
+    await executeOperation("updateEquipmentSituationManual", [id, { situacaoRemota: "Sucata", motivoAlteracaoSituacao: "Movimento posterior independente" }], admin)
+    eq = (await db.collection("equipments").doc(id).get()).data()!
+    await executeOperation("rectifyMaintenance", [maintenanceId, id, { ...conclusion, observacoes: "Outra informação técnica retificada com histórico" }, "Ajuste descritivo sem alterar a movimentação posterior", eq.operationVersion], admin)
+    expect((await db.collection("equipments").doc(id).get()).data()!.situacaoRemota).toBe("Sucata")
+  })
+  it("só administrador retifica resultado e bloqueia mudança operacional após outra movimentação", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)
+    let eq = (await db.collection("equipments").doc(id).get()).data()!
+    await expect(executeOperation("rectifyMaintenance", [maintenanceId, id, conclusion, "Uma justificativa válida para retificação", eq.operationVersion], tech)).rejects.toThrow("administradores")
+    await executeOperation("rectifyMaintenance", [maintenanceId, id, { ...conclusion, operadoraDepois: "Vivo" }, "Operadora digitada incorretamente na conclusão", eq.operationVersion], admin)
+    expect((await db.collection("equipments").doc(id).get()).data()!.operadoraAtual).toBe("Vivo")
+    await executeOperation("updateEquipmentSituationManual", [id, { situacaoRemota: "Sucata", motivoAlteracaoSituacao: "Movimentação realizada após a conclusão" }], admin)
+    eq = (await db.collection("equipments").doc(id).get()).data()!
+    await expect(executeOperation("rectifyMaintenance", [maintenanceId, id, { ...conclusion, situacaoRemota: "Triagem" }, "Tentativa de alterar resultado antigo após movimentação", eq.operationVersion], admin)).rejects.toThrow("posterior")
+  })
+  it("cancela abertura por engano sem contar como serviço concluído e conserva diário e motivo", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const ref = db.collection("equipments").doc(id)
+    const version = (await ref.get()).data()!.operationVersion || 0
+    await executeOperation("cancelMaintenance", [maintenanceId, id, "Atendimento aberto no equipamento incorreto", version], tech)
+    const cancelled = (await db.collection("maintenances").doc(maintenanceId).get()).data()!
+    expect(cancelled.status).toBe("cancelada")
+    expect(cancelled.dataFinalizacao).toBeNull()
+    expect(cancelled.motivoCancelamento).toContain("incorreto")
+    expect(cancelled.equipmentSnapshot.modelo).toBe(equipment.modelo)
+    const restored = (await ref.get()).data()!
+    expect(restored.situacaoRemota).toBe("Triagem")
+    expect(restored.manutencaoId).toBeUndefined()
+    expect(restored.operationVersion).toBe(version + 1)
+    const change = (await db.collection("operational_changes").doc(restored.lastChangeId).get()).data()!
+    expect(change.before.situacaoRemota).toBe("Manutenção")
+    expect(change.after.situacaoRemota).toBe("Triagem")
+    const metrics = await executeOperation("getDashboardMetrics", ["2026-11"], viewer)
+    expect(metrics).toMatchObject({ totalMaintenances: 0, inProgress: 0, completedThisMonth: 0, cancelledMaintenances: 1 })
+  })
+  it("exige responsável, motivo e estado atual no cancelamento da manutenção", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const version = (await db.collection("equipments").doc(id).get()).data()!.operationVersion || 0
+    await expect(executeOperation("cancelMaintenance", [maintenanceId, id, "Justificativa suficiente para cancelar", version], { ...tech, id: "outro-tecnico" })).rejects.toThrow("responsável")
+    await expect(executeOperation("cancelMaintenance", [maintenanceId, id, "curto", version], tech)).rejects.toThrow()
+    await expect(executeOperation("cancelMaintenance", [maintenanceId, id, "Justificativa suficiente para cancelar", version + 1], tech)).rejects.toThrow("atualizado")
+    const results = await Promise.allSettled([executeOperation("cancelMaintenance", [maintenanceId, id, "Primeiro cancelamento da abertura incorreta", version], tech), executeOperation("cancelMaintenance", [maintenanceId, id, "Segundo cancelamento da abertura incorreta", version], tech)])
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1)
+    await expect(executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)).rejects.toThrow()
+  })
   it("mantém resultado incerto quando o transporte falha depois de aplicar uma operação do lote", async () => {
     const id = await executeOperation("createEquipment", [equipment], admin) as string
     const original = db.runTransaction.bind(db)

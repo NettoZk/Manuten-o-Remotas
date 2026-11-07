@@ -42,6 +42,10 @@ export interface EquipmentSituationReport {
 }
 
 export interface Equipment {
+  placement?: PhysicalPlacement
+  cadastroAnulado?: boolean
+  operationVersion?: number
+  lastChangeId?: string
   id: string
   numeroRemota: string
   modelo: string
@@ -78,7 +82,25 @@ export interface Equipment {
   substituidaPorNumero?: string
 }
 
+export interface PhysicalPlacement {
+  id: string
+  type: "polo" | "estoque"
+  destination: string
+  recipientName: string
+  status: "em_transito" | "recebida"
+  sentAt: Date
+  sentBy: string
+  sentUserId: string
+  notes?: string
+  receivedAt?: Date
+  receivedBy?: string
+  receivedUserId?: string
+  receiptNotes?: string
+}
+
 export interface Warranty {
+  revisionCount?: number
+  returnData?: Omit<import("./validation").WarrantyReturnInput, "garantiaId">
   id: string
   equipmentId: string
   numeroRemota: string
@@ -126,6 +148,20 @@ export interface EquipmentSnapshot {
 }
 
 export interface Maintenance {
+  revisionCount?: number
+  retificadaEm?: Date
+  retificadaPor?: string
+  motivoRetificacao?: string
+  initialSituation?: string
+  tecnicoAberturaId?: string
+  tecnicoAberturaNome?: string
+  transferCount?: number
+  transferidaPor?: string
+  motivoTransferencia?: string
+  completionRevision?: number
+  canceladaEm?: Date
+  canceladaPor?: string
+  motivoCancelamento?: string
   draft?: import("./validation").MaintenanceDraft
   draftVersion?: number
   draftUpdatedAt?: Date
@@ -149,7 +185,7 @@ export interface Maintenance {
   observacoes: string
   // Situação registrada na conclusão; independe de alterações futuras do equipamento.
   situacaoRemota?: string
-  status: "em_andamento" | "finalizada"
+  status: "em_andamento" | "finalizada" | "cancelada"
   motivoGarantia?: string
   // Campos para finalização forçada
   finalizadoForcadamente?: boolean

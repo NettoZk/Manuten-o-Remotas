@@ -11,6 +11,15 @@ function commands(count: number, length = 0): BulkCommand[] {
   return Array.from({ length: count }, (_, index) => ({ number: `Q${index}`, operation: "updateEquipmentSituationManual", args: [`id-${index}`, { situacaoRemota: "Recuperada", motivoAlteracaoSituacao: "x".repeat(length) }] }))
 }
 describe("envio dos lotes sem exceder o contrato da API", () => {
+  it("conserva identificação e linha original também no segundo bloco e no comprovante local", async () => {
+    api.mockImplementation(async (_path, body) => ({ result: (body as { args: unknown[][] }).args[0].map(() => ({ ok: false, error: "Impedimento confirmado" })) }))
+    const list = commands(21).map((command, index) => ({ ...command, sourceRow: index + 10 }))
+    const receipt = vi.fn()
+    await runBulkMovements(list, undefined, receipt)
+    const last = (api.mock.calls[1][1] as { args: { number: string; sourceRow: number }[][] }).args[0][0]
+    expect(last).toMatchObject({ number: "Q20", sourceRow: 30 })
+    expect(receipt.mock.calls[1][0]).toMatchObject({ numbers: ["Q20"], sourceRows: [30] })
+  })
   it("mantém sucessos quando uma linha posterior excede o limite", async () => {
     api.mockImplementation(async (_path, body) => ({ result: (body as { args: unknown[][] }).args[0].map(() => ({ ok: true })) }))
     const list = [...commands(20), ...commands(1, 30_000), ...commands(1)]
