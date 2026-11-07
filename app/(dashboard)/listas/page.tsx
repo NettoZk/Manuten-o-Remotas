@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
+import { useLiveData } from "@/contexts/live-data-context"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,25 +30,22 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
 import {
-  getDefects,
   createDefect,
   updateDefect,
   deleteDefect,
-  getServices,
   createService,
   updateService,
   deleteService,
-  getOperators,
   createOperator,
   updateOperator,
   deleteOperator,
-  getEquipmentSituations,
   createEquipmentSituation,
   updateEquipmentSituation,
   deleteEquipmentSituation,
 } from "@/lib/services"
-import type { Defect, Service, Operator, EquipmentSituation } from "@/lib/types"
-import { Settings, Plus, Pencil, Trash2, AlertTriangle, Wrench, Signal, MapPin } from "lucide-react"
+import type { Defect, Service, Operator } from "@/lib/types"
+import { isProtectedSituation } from "@/lib/validation"
+import { Plus, Pencil, Trash2, AlertTriangle, Wrench, Signal, MapPin } from "lucide-react"
 
 type ListItem = Defect | Service | Operator
 
@@ -60,6 +58,7 @@ interface ListManagerProps {
   onUpdate: (id: string, data: Partial<ListItem>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onRefresh: () => void
+  protectSituations?: boolean
 }
 
 function ListManager({
@@ -71,6 +70,7 @@ function ListManager({
   onUpdate,
   onDelete,
   onRefresh,
+  protectSituations = false,
 }: ListManagerProps) {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [editingItem, setEditingItem] = useState<ListItem | null>(null)
@@ -93,7 +93,7 @@ function ListManager({
       toast.success("Item adicionado com sucesso")
     } catch (error) {
       console.error("Erro ao adicionar:", error)
-      toast.error("Erro ao adicionar item")
+      toast.error(error instanceof Error ? error.message : "Erro ao adicionar item")
     } finally {
       setIsLoading(false)
     }
@@ -110,7 +110,7 @@ function ListManager({
       toast.success("Item atualizado com sucesso")
     } catch (error) {
       console.error("Erro ao atualizar:", error)
-      toast.error("Erro ao atualizar item")
+      toast.error(error instanceof Error ? error.message : "Erro ao atualizar item")
     } finally {
       setIsLoading(false)
     }
@@ -127,7 +127,7 @@ function ListManager({
       toast.success("Item excluído com sucesso")
     } catch (error) {
       console.error("Erro ao excluir:", error)
-      toast.error("Erro ao excluir item")
+      toast.error(error instanceof Error ? error.message : "Erro ao excluir item")
     } finally {
       setIsLoading(false)
     }
@@ -193,12 +193,16 @@ function ListManager({
                   <Badge variant={item.ativo ? "default" : "secondary"}>
                     {item.ativo ? "Ativo" : "Inativo"}
                   </Badge>
+                  {protectSituations && isProtectedSituation(item.nome) && <Badge variant="outline">Situação do sistema</Badge>}
                 </div>
                 <div className="flex gap-2">
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => setEditingItem(item)}
+                    disabled={protectSituations && isProtectedSituation(item.nome) && item.ativo}
+                    aria-label={`Editar ${item.nome}`}
+                    title={protectSituations && isProtectedSituation(item.nome) ? "Situação necessária para os procedimentos do sistema" : `Editar ${item.nome}`}
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
@@ -206,6 +210,8 @@ function ListManager({
                     variant="ghost"
                     size="icon"
                     onClick={() => setDeletingItem(item)}
+                    disabled={protectSituations && isProtectedSituation(item.nome)}
+                    aria-label={`Desativar ${item.nome}`}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -228,6 +234,7 @@ function ListManager({
                 <FieldLabel>Nome</FieldLabel>
                 <Input
                   value={editingItem.nome}
+                  disabled={protectSituations && isProtectedSituation(editingItem.nome)}
                   onChange={(e) =>
                     setEditingItem({ ...editingItem, nome: e.target.value })
                   }
@@ -265,7 +272,7 @@ function ListManager({
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir Item</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja excluir "{deletingItem?.nome}"? Esta ação
+              Tem certeza que deseja excluir &quot;{deletingItem?.nome}&quot;? Esta ação
               não pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -280,34 +287,8 @@ function ListManager({
 }
 
 export default function ListsPage() {
-  const [defects, setDefects] = useState<Defect[]>([])
-  const [services, setServices] = useState<Service[]>([])
-  const [operators, setOperators] = useState<Operator[]>([])
-  const [situations, setSituations] = useState<EquipmentSituation[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const loadData = async () => {
-    try {
-      const [defectsData, servicesData, operatorsData, situationsData] = await Promise.all([
-        getDefects(),
-        getServices(),
-        getOperators(),
-        getEquipmentSituations(),
-      ])
-      setDefects(defectsData)
-      setServices(servicesData)
-      setOperators(operatorsData)
-      setSituations(situationsData)
-    } catch (error) {
-      console.error("Erro ao carregar dados:", error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    loadData()
-  }, [])
+  const { defects, services, operators, situations, loading } = useLiveData()
+  const loadData = () => { /* As assinaturas atualizam as quatro listas. */ }
 
   if (loading) {
     return (
@@ -376,6 +357,7 @@ export default function ListsPage() {
         <TabsContent value="situations">
           <ListManager
             title="Situações da Remota"
+            protectSituations
             description="Lista de situações que podem ser atribuídas às remotas após manutenção"
             icon={<MapPin className="h-5 w-5" />}
             items={situations}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +15,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { deleteEquipment, archiveEquipment, hasMaintenanceHistory } from "@/lib/services"
 import type { Equipment } from "@/lib/types"
+import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
 import { AlertTriangle, Archive } from "lucide-react"
 
@@ -33,34 +34,21 @@ export function DeleteEquipmentDialog({
 }: DeleteEquipmentDialogProps) {
   const { user } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
-  const [checking, setChecking] = useState(false)
-  const [hasHistory, setHasHistory] = useState<boolean | null>(null)
-
+  const live = useLiveData()
+  const [checking, setChecking] = useState(true)
+  const [historical, setHistorical] = useState(true)
+  const [historyError, setHistoryError] = useState(false)
   useEffect(() => {
-    if (open && equipment) {
-      checkMaintenanceHistory()
-    } else {
-      setHasHistory(null)
-    }
+    let active = true
+    if (!open || !equipment) return
+    setChecking(true); setHistoryError(false)
+    hasMaintenanceHistory(equipment.numeroRemota).then((value) => { if (active) setHistorical(value) }).catch(() => { if (active) setHistoryError(true) }).finally(() => { if (active) setChecking(false) })
+    return () => { active = false }
   }, [open, equipment])
-
-  const checkMaintenanceHistory = async () => {
-    if (!equipment) return
-    
-    setChecking(true)
-    try {
-      const result = await hasMaintenanceHistory(equipment.numeroRemota)
-      setHasHistory(result)
-    } catch (error) {
-      console.error("[v0] Erro ao verificar histórico:", error)
-      setHasHistory(true) // Por segurança, assume que tem histórico
-    } finally {
-      setChecking(false)
-    }
-  }
+  const hasHistory = equipment ? Boolean(equipment.garantia || equipment.remotaAnteriorId || equipment.substituidaPorId || historical) : null
 
   const handleConfirm = async () => {
-    if (!equipment || !user) return
+    if (!equipment || !user || checking || historyError) return
 
     setIsLoading(true)
     try {
@@ -78,7 +66,7 @@ export function DeleteEquipmentDialog({
       onOpenChange(false)
     } catch (error) {
       console.error("[v0] Erro ao excluir/arquivar equipamento:", error)
-      toast.error("Erro ao processar. Tente novamente.")
+      toast.error(error instanceof Error ? error.message : "Erro ao processar. Tente novamente.")
     } finally {
       setIsLoading(false)
     }
@@ -100,6 +88,7 @@ export function DeleteEquipmentDialog({
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-3">
+              {historyError && <p role="alert">Não foi possível verificar o histórico. Feche esta janela e tente novamente antes de continuar.</p>}
               {checking ? (
                 <div className="flex items-center gap-2">
                   <Spinner className="h-4 w-4" />
@@ -108,7 +97,7 @@ export function DeleteEquipmentDialog({
               ) : hasHistory ? (
                 <>
                   <div className="rounded-lg bg-warning/10 border border-warning/20 p-3 text-warning">
-                    Esta remota possui histórico de manutenção e não pode ser excluída. 
+                    Esta remota possui histórico de manutenção ou garantia e não pode ser excluída.
                     O registro será mantido como inativo para preservar os dados.
                   </div>
                   <p>
@@ -132,7 +121,7 @@ export function DeleteEquipmentDialog({
           <AlertDialogCancel disabled={isLoading}>Cancelar</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
-            disabled={isLoading || checking}
+            disabled={isLoading || checking || historyError || Boolean(live.error)}
             className={hasHistory ? "bg-warning text-warning-foreground hover:bg-warning/90" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
           >
             {isLoading ? (

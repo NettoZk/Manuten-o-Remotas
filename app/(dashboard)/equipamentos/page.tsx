@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -16,30 +17,60 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { getEquipments, getMaintenancesByEquipment, getEquipmentSituations, updateEquipmentSituationManual } from "@/lib/services"
-import type { Equipment, Maintenance, EquipmentSituation } from "@/lib/types"
+import { updateEquipmentSituationManual } from "@/lib/services"
+import type { Equipment } from "@/lib/types"
+import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
 import { EditEquipmentDialog } from "@/components/edit-equipment-dialog"
 import { DeleteEquipmentDialog } from "@/components/delete-equipment-dialog"
 import { ImportEquipmentDialog } from "@/components/import-equipment-dialog"
-import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload } from "lucide-react"
+import { WarrantyDialog } from "@/components/warranty-dialog"
+import { WarrantyPreparationActions } from "@/components/warranty-preparation-actions"
+import { WarrantyHistory } from "@/components/warranty-history"
+import { BulkMovementDialog } from "@/components/bulk-movement-dialog"
+import { EquipmentTimeline } from "@/components/equipment-timeline"
+import { useEquipmentMaintenanceHistory } from "@/hooks/use-equipment-maintenance-history"
+import { warrantyWaitLabel } from "@/lib/warranty-wait"
+import type { BulkAction } from "@/lib/bulk-movements"
+import { isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "@/lib/validation"
+import { filterEquipmentRegistration, searchEquipments, type EquipmentRegistrationFilter } from "@/lib/equipment-search"
+import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload, ShieldCheck, Send, Undo2 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+import { toast } from "sonner"
 
 export default function EquipmentsPage() {
   const { user, hasPermission } = useAuth()
+  const live = useLiveData()
   const isAdmin = hasPermission(["admin"])
+  const canMove = hasPermission(["admin", "tecnico"])
+  const [movementIds, setMovementIds] = useState<string[]>([])
+  const [showBulkMovement, setShowBulkMovement] = useState(false)
+  const [bulkInitialAction, setBulkInitialAction] = useState<BulkAction | undefined>()
+  const [warrantyQueueOnly, setWarrantyQueueOnly] = useState(false)
   
-  const [equipments, setEquipments] = useState<Equipment[]>([])
-  const [filteredEquipments, setFilteredEquipments] = useState<Equipment[]>([])
-  const [loading, setLoading] = useState(true)
+  const equipments = live.equipments
+  const loading = live.loading
   const [search, setSearch] = useState("")
+  const [registrationFilter, setRegistrationFilter] = useState<EquipmentRegistrationFilter>("todas")
+  const detailsRef = useRef<HTMLDivElement>(null)
+  const [warrantyEquipmentId, setWarrantyEquipmentId] = useState<string | null>(null)
+  const warrantyEquipment = live.equipments.find((item) => item.id === warrantyEquipmentId && item.estadoRegistro !== "inativo")
   const [situacaoFilter, setSituacaoFilter] = useState("")
-  const [equipmentSituations, setEquipmentSituations] = useState<EquipmentSituation[]>([])
+  const equipmentSituations = live.situations.filter((item) => item.ativo)
+  const matches = useMemo(() => searchEquipments(equipments, search, situacaoFilter), [equipments, search, situacaoFilter])
+  const filteredEquipments = useMemo(() => filterEquipmentRegistration(matches, registrationFilter).filter((item) => !warrantyQueueOnly || (item.estadoRegistro !== "inativo" && item.garantia?.status === "separada")), [matches, registrationFilter, warrantyQueueOnly])
+  const movementEquipments = equipments.filter((item) => movementIds.includes(item.id))
+  const hasPreparedSelection = movementEquipments.length > 0 && movementEquipments.every((item) => item.estadoRegistro !== "inativo" && item.garantia?.status === "separada" && item.garantia.maintenanceId && isWarrantySeparatedSituation(item.situacaoRemota || ""))
+  const canSeparateSelected = movementEquipments.length > 0 && movementEquipments.every((item) => item.estadoRegistro !== "inativo" && live.maintenances.some((maintenance) => maintenance.id === item.manutencaoId && maintenance.status === "em_andamento" && maintenance.tecnicoId === user?.id))
+  const separationSituation = equipmentSituations.find((item) => isWarrantySeparatedSituation(item.nome))?.nome
+  const awaitingDispatchCount = equipments.filter((item) => item.estadoRegistro !== "inativo" && item.garantia?.status === "separada").length
+  function openBulk(action?: BulkAction) { setBulkInitialAction(action); setShowBulkMovement(true) }
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null)
-  const [equipmentHistory, setEquipmentHistory] = useState<Maintenance[]>([])
-  const [loadingHistory, setLoadingHistory] = useState(false)
+  const history = useEquipmentMaintenanceHistory(selectedEquipment?.numeroRemota)
+  const equipmentHistory = history.records
+  const loadingHistory = history.loading
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
   
   // Estados para modal de alteração de situação
@@ -60,68 +91,23 @@ export default function EquipmentsPage() {
   // Estados para modal de importação
   const [showImportDialog, setShowImportDialog] = useState(false)
 
+  const selectedId = selectedEquipment?.id
   useEffect(() => {
-    async function loadData() {
-      try {
-        const [equipmentsData, situationsData] = await Promise.all([
-          getEquipments(),
-          getEquipmentSituations()
-        ])
-        setEquipments(equipmentsData)
-        setFilteredEquipments(equipmentsData)
-        setEquipmentSituations(situationsData.filter((s) => s.ativo))
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
-    loadData()
-  }, [])
+    if (!selectedId) return
+    const current = live.equipments.find((item) => item.id === selectedId)
+    if (!current) { setShowDetailsDialog(false); setSelectedEquipment(null); return }
+    setSelectedEquipment(current)
+  }, [selectedId, live.equipments])
 
-  useEffect(() => {
-    let filtered = equipments
-
-    // Filtrar por texto de busca
-    if (search.trim()) {
-      const searchLower = search.toLowerCase()
-      filtered = filtered.filter(
-        (e) =>
-          e.numeroRemota.toLowerCase().includes(searchLower) ||
-          e.modelo.toLowerCase().includes(searchLower) ||
-          e.operadoraAtual.toLowerCase().includes(searchLower) ||
-          (e.situacaoRemota && e.situacaoRemota.toLowerCase().includes(searchLower))
-      )
-    }
-
-    // Filtrar por situação
-    if (situacaoFilter) {
-      filtered = filtered.filter((e) => e.situacaoRemota === situacaoFilter)
-    }
-
-    setFilteredEquipments(filtered)
-  }, [search, situacaoFilter, equipments])
-
-  const handleViewDetails = async (equipment: Equipment) => {
+  const handleViewDetails = (equipment: Equipment) => {
+    detailsRef.current?.scrollTo({ top: 0 })
     setSelectedEquipment(equipment)
     setShowDetailsDialog(true)
-    setLoadingHistory(true)
-
-    try {
-      const history = await getMaintenancesByEquipment(equipment.numeroRemota)
-      setEquipmentHistory(history)
-    } catch (error) {
-      console.error("Erro ao carregar histórico:", error)
-      setEquipmentHistory([])
-    } finally {
-      setLoadingHistory(false)
-    }
   }
 
   const handleCloseDialog = () => {
     setShowDetailsDialog(false)
     setSelectedEquipment(null)
-    setEquipmentHistory([])
   }
 
   const handleOpenChangeSituation = (equipment: Equipment) => {
@@ -150,19 +136,10 @@ export default function EquipmentsPage() {
         motivoAlteracaoSituacao: motivoAlteracao || undefined,
       })
 
-      // Atualizar lista local
-      setEquipments((prev) =>
-        prev.map((e) =>
-          e.id === equipmentToChangeSituation.id
-            ? { ...e, situacaoRemota: newSituacao }
-            : e
-        )
-      )
-
       handleCloseChangeSituation()
     } catch (error) {
       console.error("Erro ao alterar situação:", error)
-      alert("Erro ao alterar situação. Tente novamente.")
+      toast.error(error instanceof Error ? error.message : "Erro ao alterar situação. Tente novamente.")
     } finally {
       setSavingSituation(false)
     }
@@ -175,9 +152,7 @@ export default function EquipmentsPage() {
   }
 
   const handleEquipmentUpdated = (updatedEquipment: Equipment) => {
-    setEquipments((prev) =>
-      prev.map((e) => (e.id === updatedEquipment.id ? updatedEquipment : e))
-    )
+    if (selectedEquipment?.id === updatedEquipment.id) setSelectedEquipment(updatedEquipment)
   }
 
   // Handlers de exclusão
@@ -186,24 +161,12 @@ export default function EquipmentsPage() {
     setShowDeleteDialog(true)
   }
 
-  const handleEquipmentDeleted = (equipmentId: string, archived: boolean) => {
-    if (archived) {
-      // Se foi arquivado, atualiza o estado local
-      setEquipments((prev) =>
-        prev.filter((e) => e.id !== equipmentId)
-      )
-    } else {
-      // Se foi excluído, remove da lista
-      setEquipments((prev) => prev.filter((e) => e.id !== equipmentId))
-    }
+  const handleEquipmentDeleted = (equipmentId: string) => {
+    if (selectedEquipment?.id === equipmentId) handleCloseDialog()
   }
 
   // Handler de importação
-  const handleImportComplete = async () => {
-    // Recarregar a lista de equipamentos
-    const equipmentsData = await getEquipments()
-    setEquipments(equipmentsData)
-  }
+  const handleImportComplete = () => { /* A assinatura recebe os registros gravados. */ }
 
   if (loading) {
     return (
@@ -245,7 +208,8 @@ export default function EquipmentsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Buscar por número, modelo, operadora ou situação..."
+                aria-label="Pesquisar remotas"
+                placeholder="Número/IMEI atual ou anterior, modelo, OCM..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9"
@@ -253,9 +217,10 @@ export default function EquipmentsPage() {
             </div>
             <div className="w-full md:w-64">
               <select
+                aria-label="Filtrar por situação"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 value={situacaoFilter}
-                onChange={(e) => setSituacaoFilter(e.target.value)}
+                onChange={(e) => { setSituacaoFilter(e.target.value); setWarrantyQueueOnly(false) }}
               >
                 <option value="">Todas as situações</option>
                 {equipmentSituations.map((situation) => (
@@ -267,15 +232,34 @@ export default function EquipmentsPage() {
             </div>
           </div>
 
+          <div role="group" aria-label="Registros exibidos" className="mb-2 flex flex-wrap gap-2">
+            {([ ["todas", "Todas"], ["ativas", "Ativas"], ["arquivadas", "Arquivadas"] ] as const).map(([value, label]) => <Button key={value} size="sm" variant={!warrantyQueueOnly && registrationFilter === value ? "default" : "outline"} aria-pressed={!warrantyQueueOnly && registrationFilter === value} onClick={() => { setRegistrationFilter(value); setWarrantyQueueOnly(false) }}>{label} ({filterEquipmentRegistration(matches, value).length})</Button>)}
+            {canMove && <Button type="button" size="sm" variant={warrantyQueueOnly ? "default" : "outline"} aria-pressed={warrantyQueueOnly} onClick={() => { setWarrantyQueueOnly(!warrantyQueueOnly); if (!warrantyQueueOnly) { setSearch(""); setSituacaoFilter(""); setRegistrationFilter("ativas") } }}><Send className="mr-2 h-4 w-4" />Aguardando envio para garantia ({awaitingDispatchCount})</Button>}
+          </div>
+          <p className="mb-4 text-xs text-muted-foreground">A busca inclui cadastros arquivados e vínculos de substituição. Use os filtros para consultar somente ativas ou arquivadas.</p>
+          {canMove && <div className="mb-4 space-y-2 rounded-lg border p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span role="status" className="text-sm">{movementEquipments.length} remota(s) selecionada(s)</span>
+              <Button type="button" disabled={!hasPreparedSelection} onClick={() => openBulk("enviar_garantia")}><Send className="mr-2 h-4 w-4" />Enviar selecionadas para garantia</Button>
+              <Button type="button" variant="outline" disabled={!hasPreparedSelection} onClick={() => openBulk("cancelar_separacao")}><Undo2 className="mr-2 h-4 w-4" />Cancelar separação das selecionadas</Button>
+              <Button type="button" variant="outline" disabled={!canSeparateSelected || !separationSituation} onClick={() => openBulk("finalizar_manutencao")}>Separar selecionadas para garantia</Button>
+              <Button type="button" variant="outline" onClick={() => openBulk()}>Movimentação em massa</Button>
+              {!!movementIds.length && <Button type="button" variant="ghost" onClick={() => setMovementIds([])}>Limpar seleção</Button>}
+            </div>
+            <p className="text-xs text-muted-foreground">Para separar, selecione remotas em manutenção sob sua responsabilidade. Para enviar ou cancelar a separação, selecione remotas aguardando saída para garantia.</p>
+            {movementEquipments.some((item) => !filteredEquipments.some((shown) => shown.id === item.id)) && <p className="text-xs text-muted-foreground">A seleção inclui remotas fora do filtro atual. Use Limpar seleção para selecionar somente as exibidas.</p>}
+          </div>}
+
           {filteredEquipments.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
-              Nenhuma remota encontrada
+              Nenhuma remota encontrada neste filtro.{registrationFilter !== "todas" && matches.length > 0 && <Button variant="link" onClick={() => setRegistrationFilter("todas")}>Ver resultados em todos os registros</Button>}
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b text-left">
+                    {canMove && <th className="pb-3 pr-3"><input type="checkbox" aria-label="Selecionar remotas ativas deste filtro" checked={filteredEquipments.some((item) => item.estadoRegistro !== "inativo") && filteredEquipments.filter((item) => item.estadoRegistro !== "inativo").every((item) => movementIds.includes(item.id))} onChange={(event) => { const ids = filteredEquipments.filter((item) => item.estadoRegistro !== "inativo").map((item) => item.id); setMovementIds((old) => event.target.checked ? [...new Set([...old, ...ids])] : old.filter((id) => !ids.includes(id))) }} /></th>}
                     <th className="pb-3 font-medium">Número</th>
                     <th className="pb-3 font-medium">Modelo</th>
                     <th className="pb-3 font-medium">Ano</th>
@@ -290,7 +274,12 @@ export default function EquipmentsPage() {
                 <tbody>
                   {filteredEquipments.map((equipment) => (
                     <tr key={equipment.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                      <td className="py-3 font-medium">{equipment.numeroRemota}</td>
+                      {canMove && <td className="py-3 pr-3"><input type="checkbox" aria-label={`Selecionar remota ${equipment.numeroRemota}`} disabled={equipment.estadoRegistro === "inativo"} checked={movementIds.includes(equipment.id)} onChange={(event) => setMovementIds((old) => event.target.checked ? [...new Set([...old, equipment.id])] : old.filter((id) => id !== equipment.id))} /></td>}
+                      <td className="py-3 font-medium"><button className="text-left hover:underline" aria-label={`Ver remota ${equipment.numeroRemota}`} onClick={() => handleViewDetails(equipment)}>{equipment.numeroRemota}</button>
+                        {equipment.remotaAnteriorNumero && <p className="text-xs font-normal text-muted-foreground">Anterior: {equipment.remotaAnteriorNumero}</p>}
+                        {equipment.substituidaPorNumero && <p className="text-xs font-normal text-muted-foreground">Substituta: {equipment.substituidaPorNumero}</p>}
+                        <Badge variant={equipment.estadoRegistro === "inativo" ? "secondary" : "outline"} className="mt-1">{equipment.estadoRegistro === "inativo" ? "Arquivada" : "Ativa"}</Badge>
+                      </td>
                       <td className="py-3">{equipment.modelo}</td>
                       <td className="py-3">{equipment.anoFabricacao}</td>
                       <td className="py-3">{equipment.lote}</td>
@@ -304,7 +293,10 @@ export default function EquipmentsPage() {
                       </td>
                       <td className="py-3">
                         {equipment.situacaoRemota ? (
+                          <>
                           <Badge variant="outline">{equipment.situacaoRemota}</Badge>
+                          {warrantyWaitLabel(equipment) && <p className="mt-1 text-xs text-muted-foreground">{warrantyWaitLabel(equipment)}</p>}
+                          </>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
@@ -324,13 +316,18 @@ export default function EquipmentsPage() {
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
-                          {isAdmin && (
+                          {canMove && equipment.estadoRegistro !== "inativo" && <WarrantyPreparationActions equipment={equipment} compact />}
+                          {isAdmin && equipment.estadoRegistro !== "inativo" && (
                             <>
+                              {equipment.garantia?.status === "enviada" && <Button size="sm" variant="ghost" title="Registrar retorno da garantia" onClick={() => setWarrantyEquipmentId(equipment.id)}>
+                                <ShieldCheck className="h-4 w-4" />
+                              </Button>}
                               <Button
                                 size="sm"
                                 variant="ghost"
                                 onClick={() => handleOpenEdit(equipment)}
                                 title="Editar"
+                                disabled={equipment.garantia?.status === "enviada" || equipment.garantia?.status === "separada"}
                               >
                                 <Pencil className="h-4 w-4" />
                               </Button>
@@ -339,6 +336,7 @@ export default function EquipmentsPage() {
                                 variant="ghost"
                                 onClick={() => handleOpenChangeSituation(equipment)}
                                 title="Alterar Situação"
+                                disabled={equipment.garantia?.status === "enviada" || equipment.garantia?.status === "separada"}
                               >
                                 <RefreshCw className="h-4 w-4" />
                               </Button>
@@ -347,6 +345,7 @@ export default function EquipmentsPage() {
                                 variant="ghost"
                                 onClick={() => handleOpenDelete(equipment)}
                                 title="Excluir"
+                                disabled={equipment.garantia?.status === "enviada" || equipment.garantia?.status === "separada"}
                                 className="text-destructive hover:text-destructive"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -366,7 +365,7 @@ export default function EquipmentsPage() {
 
       {/* Dialog de Detalhes da Remota */}
       <Dialog open={showDetailsDialog} onOpenChange={handleCloseDialog}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent ref={detailsRef} className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Radio className="h-5 w-5 text-primary" />
@@ -379,6 +378,7 @@ export default function EquipmentsPage() {
 
           {selectedEquipment && (
             <div className="space-y-6">
+              {selectedEquipment.estadoRegistro === "inativo" && <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm"><p className="font-medium">Remota arquivada · consulta do histórico</p><p>{selectedEquipment.substituidaPorNumero ? `Substituída pela remota ${selectedEquipment.substituidaPorNumero} no retorno da garantia.` : "Este cadastro está fora da operação ativa."}</p>{selectedEquipment.arquivadoEm && <p className="text-muted-foreground">Arquivada em {format(selectedEquipment.arquivadoEm, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}{selectedEquipment.arquivadoPor ? ` por ${selectedEquipment.arquivadoPor}` : ""}</p>}</div>}
               {/* Informações do Cadastro */}
               <Card className="border-border/50">
                 <CardHeader className="pb-3">
@@ -466,6 +466,17 @@ export default function EquipmentsPage() {
                 </CardContent>
               </Card>
 
+              {canMove && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status === "separada" && <div className="flex flex-wrap gap-2"><WarrantyPreparationActions equipment={selectedEquipment} /></div>}
+              {warrantyWaitLabel(selectedEquipment) && <p className="text-sm text-muted-foreground">{warrantyWaitLabel(selectedEquipment)}</p>}
+              <EquipmentTimeline key={selectedEquipment.id} equipmentId={selectedEquipment.id} />
+              {history.error && <p role="alert" className="text-sm text-destructive">Não foi possível carregar o histórico de atendimentos. <button className="underline" onClick={history.retry}>Tentar novamente</button></p>}
+              {isAdmin && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status !== "separada" && (selectedEquipment.garantia?.status === "enviada" ? <Button variant="outline" onClick={() => setWarrantyEquipmentId(selectedEquipment.id)}><ShieldCheck className="mr-2 h-4 w-4" />Registrar retorno da garantia</Button> : <div className="space-y-2 text-sm"><p className="text-muted-foreground">Para encaminhar à garantia, conclua a avaliação em manutenção como Separado para garantia. Depois, confirme a saída física em Equipamentos.</p><Button variant="outline" asChild><Link href={`/manutencao?remota=${encodeURIComponent(selectedEquipment.numeroRemota)}`}>Abrir procedimento de manutenção</Link></Button></div>)}
+              <WarrantyHistory equipment={selectedEquipment} onViewLinked={(id) => {
+                const linked = live.equipments.find((item) => item.id === id)
+                if (linked) handleViewDetails(linked)
+                else toast.error("Não foi possível localizar a remota vinculada")
+              }} />
+
               {/* Histórico de Manutenções */}
               <Card className="border-border/50">
                 <CardHeader className="pb-3">
@@ -496,6 +507,7 @@ export default function EquipmentsPage() {
                           key={maintenance.id}
                           className="rounded-lg border border-border/50 p-4 transition-colors hover:bg-muted/30"
                         >
+                          {maintenance.equipmentSnapshot && <p className="mb-2 text-xs text-muted-foreground">Dados do atendimento: {maintenance.equipmentSnapshot.modelo || "Modelo não informado"} · OCM {maintenance.equipmentSnapshot.lote || "não informada"}</p>}
                           <div className="flex items-start justify-between">
                             <div className="space-y-2">
                               <div className="flex items-center gap-3">
@@ -621,7 +633,7 @@ export default function EquipmentsPage() {
                   onChange={(e) => setNewSituacao(e.target.value)}
                 >
                   <option value="">Selecione a situação...</option>
-                  {equipmentSituations.map((situation) => (
+                  {equipmentSituations.filter((item) => !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome) && item.nome !== "Manutenção" && !(equipmentToChangeSituation.status === "Usada" && isNewSituation(item.nome))).map((situation) => (
                     <option key={situation.id} value={situation.nome}>
                       {situation.nome}
                     </option>
@@ -685,6 +697,8 @@ export default function EquipmentsPage() {
         onOpenChange={setShowImportDialog}
         onImported={handleImportComplete}
       />
+      {warrantyEquipment && <WarrantyDialog key={warrantyEquipment.id} equipment={warrantyEquipment} situations={equipmentSituations} operators={live.operators} onClose={() => setWarrantyEquipmentId(null)} />}
+      {showBulkMovement && <BulkMovementDialog equipments={equipments} selectedIds={movementIds} initialAction={bulkInitialAction} initialSituation={bulkInitialAction === "finalizar_manutencao" ? separationSituation : undefined} onClose={() => setShowBulkMovement(false)} onCompleted={(numbers) => setMovementIds((old) => old.filter((id) => !equipments.some((item) => item.id === id && numbers.includes(item.numeroRemota))))} />}
     </div>
   )
 }

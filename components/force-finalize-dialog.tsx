@@ -66,7 +66,7 @@ export function ForceFinishedDialog({
       onFinalized()
     } catch (error) {
       console.error("Erro ao finalizar forçadamente:", error)
-      toast.error("Erro ao finalizar manutenção")
+      toast.error(error instanceof Error ? error.message : "Erro ao finalizar manutenção")
     } finally {
       setIsLoading(false)
     }

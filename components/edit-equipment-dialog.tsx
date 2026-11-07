@@ -16,6 +16,7 @@ import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { updateEquipmentWithLog } from "@/lib/services"
+import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "@/lib/validation"
 import type { Equipment, EquipmentSituation, EquipmentStatus } from "@/lib/types"
 import { useAuth } from "@/contexts/auth-context"
 import { Pencil } from "lucide-react"
@@ -69,7 +70,7 @@ export function EditEquipmentDialog({
           modelo: modelo.trim(),
           status,
           situacaoRemota: situacaoRemota || undefined,
-          observacoes: observacoes.trim() || undefined,
+          observacoes: observacoes.trim(),
         },
         user.id,
         user.nome
@@ -80,7 +81,7 @@ export function EditEquipmentDialog({
         modelo: modelo.trim(),
         status,
         situacaoRemota: situacaoRemota || undefined,
-        observacoes: observacoes.trim() || undefined,
+        observacoes: observacoes.trim(),
         ultimaEdicaoEm: new Date(),
         ultimaEdicaoPor: user.nome,
       }
@@ -90,7 +91,7 @@ export function EditEquipmentDialog({
       onOpenChange(false)
     } catch (error) {
       console.error("[v0] Erro ao atualizar equipamento:", error)
-      toast.error("Erro ao atualizar remota. Tente novamente.")
+      toast.error(error instanceof Error ? error.message : "Erro ao atualizar remota. Tente novamente.")
     } finally {
       setIsLoading(false)
     }
@@ -134,7 +135,7 @@ export function EditEquipmentDialog({
                 <select
                   className="flex h-11 w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as EquipmentStatus)}
+                  onChange={(e) => { const next = e.target.value as EquipmentStatus; setStatus(next); if (next === "Usada" && isNewSituation(situacaoRemota)) setSituacaoRemota("") }}
                   required
                 >
                   <option value="Nova">Nova</option>
@@ -148,9 +149,10 @@ export function EditEquipmentDialog({
                   className="flex h-11 w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={situacaoRemota}
                   onChange={(e) => setSituacaoRemota(e.target.value)}
+                  required
                 >
                   <option value="">Selecione...</option>
-                  {equipmentSituations.map((situation) => (
+                  {equipmentSituations.filter((item) => !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome) && !(status === "Usada" && isNewSituation(item.nome))).map((situation) => (
                     <option key={situation.id} value={situation.nome}>
                       {situation.nome}
                     </option>

@@ -1,92 +1,87 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent, type ChartConfig } from "@/components/ui/chart"
+import { ChartTooltip } from "@/components/ui/chart"
+import { ReportMonthFilter } from "@/components/report-month-filter"
+import { SituationSummary } from "@/components/situation-summary"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer } from "recharts"
-import { getDashboardStats } from "@/lib/services"
-import type { Maintenance } from "@/lib/types"
+import { useLiveData } from "@/contexts/live-data-context"
+import { calculateDashboard, displayMaintenanceMetrics, monthKey, monthLabel } from "@/lib/dashboard"
+import { equipmentSituationReport, includeSituationCategories, situationColor } from "@/lib/equipment-situation-report"
+import { getEquipmentSituationReport, getDashboardMetrics, getMaintenanceTechnicianTotals } from "@/lib/services"
+import type { EquipmentSituationReport } from "@/lib/types"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { Radio, Wrench, CheckCircle, Clock, TrendingUp, Activity, RefreshCw, PieChartIcon, BarChart3, Users } from "lucide-react"
+import { Radio, Wrench, CheckCircle, Clock, TrendingUp, RefreshCw, PieChartIcon, BarChart3, Users } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-interface DashboardStats {
-  totalEquipments: number
-  totalMaintenances: number
-  inProgress: number
-  completedThisMonth: number
-  recentMaintenances: Maintenance[]
-  remotasPorSituacao: { name: string; value: number }[]
-  manutencoesPorTecnico: { name: string; total: number }[]
-  manutencoesPorMes: { mes: string; total: number }[]
-}
-
-// Cores vibrantes para os gráficos (otimizadas para tema escuro)
-const COLORS = [
-  "#22c55e", // Verde vibrante
-  "#3b82f6", // Azul vibrante
-  "#f59e0b", // Amarelo/Laranja
-  "#ef4444", // Vermelho
-  "#8b5cf6", // Roxo
-  "#06b6d4", // Ciano
-  "#ec4899", // Rosa
-  "#14b8a6", // Teal
-]
-
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
-
-  const loadStats = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) {
-      setRefreshing(true)
-    }
-    try {
-      const data = await getDashboardStats()
-      setStats(data)
-      setLastUpdate(new Date())
-    } catch (error) {
-      console.error("Erro ao carregar estatisticas:", error)
-      // Definir valores padrão em caso de erro
-      if (!stats) {
-        setStats({
-          totalEquipments: 0,
-          totalMaintenances: 0,
-          inProgress: 0,
-          completedThisMonth: 0,
-          recentMaintenances: [],
-          remotasPorSituacao: [],
-          manutencoesPorTecnico: [],
-          manutencoesPorMes: [],
-        })
-      }
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [stats])
-
+  const { equipments, maintenances, situations, loading, error, lastUpdate, refresh } = useLiveData()
+  const [selectedMonth, setSelectedMonth] = useState(() => monthKey(new Date()))
+  const [historicalReport, setHistoricalReport] = useState<EquipmentSituationReport | null>(null)
+  const [reportLoading, setReportLoading] = useState(true)
+  const [reportError, setReportError] = useState(false)
+  const [reportRevision, setReportRevision] = useState(0)
+  const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof getDashboardMetrics>> | null>(null)
+  const [metricsError, setMetricsError] = useState(false)
+  const [showTechnicians, setShowTechnicians] = useState(false)
+  const [technicianTotals, setTechnicianTotals] = useState<{ name: string; total: number }[]>([])
+  const [technicianLoading, setTechnicianLoading] = useState(false)
+  const [technicianError, setTechnicianError] = useState(false)
+  const historyCache = useRef(new Map<string, { at: number; report: EquipmentSituationReport }>())
+  const ongoingRevision = maintenances.map((item) => item.id).join(",")
+  const isCurrentMonth = selectedMonth === monthKey(new Date())
+  const base = useMemo(() => calculateDashboard(equipments, maintenances, selectedMonth), [equipments, maintenances, selectedMonth])
+  const stats = { ...base, ...metrics, manutencoesPorTecnico: technicianTotals.slice(0, 10) }
   useEffect(() => {
-    loadStats()
-    
-    // Auto-refresh a cada 30 segundos
-    const interval = setInterval(() => {
-      loadStats()
-    }, 30000)
+    let active = true
+    setMetricsError(false); setMetrics(null)
+    getDashboardMetrics(selectedMonth).then((data) => { if (active) setMetrics(data) }).catch(() => { if (active) setMetricsError(true) })
+    return () => { active = false }
+  }, [selectedMonth, ongoingRevision, reportRevision])
+  useEffect(() => {
+    if (!showTechnicians) return
+    let active = true
+    setTechnicianLoading(true); setTechnicianError(false)
+    getMaintenanceTechnicianTotals().then((data) => { if (active) setTechnicianTotals(data) }).catch(() => { if (active) setTechnicianError(true) }).finally(() => { if (active) setTechnicianLoading(false) })
+    return () => { active = false }
+  }, [showTechnicians, ongoingRevision, reportRevision])
+  const currentReport = equipmentSituationReport(equipments, [], monthKey(new Date()))
+  const report = isCurrentMonth ? currentReport : historicalReport?.month === selectedMonth ? historicalReport : null
+  const situationRows = includeSituationCategories(report?.situations || [], situations)
+  const chartSituations = situationRows.filter((item) => item.value > 0)
+  const historicalPending = !isCurrentMonth && (reportLoading || !report)
+  const firstYear = Math.min(historicalReport?.firstYear || Infinity, equipments.reduce((earliest, item) => item.dataCadastro.getTime() > 0 ? Math.min(earliest, Number(monthKey(item.dataCadastro).slice(0, 4))) : earliest, Number(monthKey(new Date()).slice(0, 4)) - 6))
+  useEffect(() => {
+    if (loading || error) return
+    let active = true
+    setReportLoading(true)
+    setReportError(false)
+    const cached = historyCache.current.get(selectedMonth)
+    if (!isCurrentMonth && cached && Date.now() - cached.at < 60_000) { setHistoricalReport(cached.report); setReportLoading(false); return }
+    // Agrupa importações e mudanças em lote; o gráfico atual já reage ao listener.
+    const timeout = setTimeout(() => {
+      getEquipmentSituationReport(selectedMonth).then((result) => {
+        if (active) {
+          setHistoricalReport(result)
+          if (!isCurrentMonth) { if (historyCache.current.size >= 24) historyCache.current.delete(historyCache.current.keys().next().value!); historyCache.current.set(selectedMonth, { at: Date.now(), report: result }) }
+        }
+      }).catch(() => {
+        if (active) setReportError(true)
+      }).finally(() => {
+        if (active) setReportLoading(false)
+      })
+    }, 200)
+    return () => { active = false; clearTimeout(timeout) }
+  }, [equipments, selectedMonth, loading, error, reportRevision, isCurrentMonth])
+  const refreshing = loading
+  const handleRefresh = () => { historyCache.current.clear(); setReportRevision((v) => v + 1); refresh() }
+  if (error) return <div role="alert" className="rounded-lg border border-destructive/40 p-6">Não foi possível carregar o dashboard. Use “Tentar novamente” para sincronizar.</div>
 
-    return () => clearInterval(interval)
-  }, [loadStats])
-
-  const handleRefresh = () => {
-    loadStats(true)
-  }
-
-  if (loading) {
+  if (loading || (!metrics && !metricsError)) {
     return (
       <div className="flex h-96 items-center justify-center">
         <Spinner className="h-8 w-8 text-primary" />
@@ -98,14 +93,14 @@ export default function DashboardPage() {
     {
       title: "Total de Remotas",
       value: stats?.totalEquipments || 0,
-      description: "Remotas cadastradas no sistema",
+      description: "Remotas ativas atualmente",
       icon: Radio,
       color: "text-primary",
       bgColor: "bg-primary/10",
     },
     {
       title: "Total de Manutencoes",
-      value: stats?.totalMaintenances || 0,
+      value: displayMaintenanceMetrics(metrics).totalMaintenances,
       description: "Manutencoes registradas",
       icon: Wrench,
       color: "text-blue-500",
@@ -121,8 +116,8 @@ export default function DashboardPage() {
     },
     {
       title: "Finalizadas no Mes",
-      value: stats?.completedThisMonth || 0,
-      description: "Manutencoes concluidas",
+      value: displayMaintenanceMetrics(metrics).completedThisMonth,
+      description: `Concluídas em ${monthLabel(selectedMonth)}`,
       icon: CheckCircle,
       color: "text-success",
       bgColor: "bg-success/10",
@@ -131,6 +126,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      {metricsError && <p role="alert" className="rounded-lg border p-3 text-sm">Não foi possível carregar os indicadores. <button className="underline" onClick={handleRefresh}>Tentar novamente</button></p>}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -186,7 +182,7 @@ export default function DashboardPage() {
       {/* Charts Section */}
       <div className="grid gap-4 md:grid-cols-2">
         {/* Gráfico de Pizza - Remotas por Situação */}
-        <Card className="border-border/50 bg-card">
+        <Card data-monthly-report className="border-border/50 bg-card">
           <CardHeader className="pb-4">
             <div className="flex items-center gap-3">
               <div className="rounded-lg bg-primary/10 p-2">
@@ -194,21 +190,27 @@ export default function DashboardPage() {
               </div>
               <div>
                 <CardTitle className="text-lg font-semibold text-foreground">
-                  Remotas por Situacao
+                  Remotas por situação — {monthLabel(selectedMonth)}
                 </CardTitle>
                 <CardDescription className="text-sm text-muted-foreground">
-                  Distribuicao das remotas por status atual
+                  {isCurrentMonth ? "Situação atual de todas as remotas ativas, com ou sem manutenção." : "Situação das remotas ativas no fechamento do mês, conforme o histórico registrado."}
                 </CardDescription>
               </div>
             </div>
+            <div className="mt-3 flex flex-wrap items-end gap-3 print:hidden">
+              <ReportMonthFilter value={selectedMonth} onChange={setSelectedMonth} firstYear={firstYear} />
+              <Button variant="outline" className="h-10" onClick={() => window.print()} disabled={!report?.totalEquipments || historicalPending || (!isCurrentMonth && reportError)}>Imprimir relatório</Button>
+            </div>
           </CardHeader>
           <CardContent>
-            {stats?.remotasPorSituacao && stats.remotasPorSituacao.length > 0 ? (
+            {reportError && <div role="alert" className="mb-4 rounded-md border border-destructive/40 p-3 text-sm">Não foi possível sincronizar o histórico. <button className="underline print:hidden" onClick={() => setReportRevision((value) => value + 1)}>Tentar novamente</button></div>}
+            {historicalPending && !reportError ? <div className="flex h-75 items-center justify-center" role="status"><Spinner className="mr-2 h-5 w-5" />Consultando histórico do mês...</div> : chartSituations.length > 0 && (isCurrentMonth || !reportError) ? (
               <div className="h-75">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={stats.remotasPorSituacao}
+                      isAnimationActive={false}
+                      data={chartSituations}
                       cx="50%"
                       cy="50%"
                       outerRadius={90}
@@ -218,8 +220,8 @@ export default function DashboardPage() {
                       label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                       labelLine={{ stroke: "#888", strokeWidth: 1 }}
                     >
-                      {stats.remotasPorSituacao.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      {chartSituations.map((item) => (
+                        <Cell key={item.name} fill={situationColor(item.name)} />
                       ))}
                     </Pie>
                     <ChartTooltip
@@ -244,9 +246,14 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="flex h-75 items-center justify-center">
-                <p className="text-sm text-muted-foreground">Sem dados disponiveis</p>
+                <p className="text-sm text-muted-foreground">{reportError && !isCurrentMonth ? "Histórico indisponível no momento" : "Nenhuma remota ativa no período selecionado"}</p>
               </div>
             )}
+            {!historicalPending && (isCurrentMonth || !reportError) && <>
+              <p className="mb-3 text-sm font-medium">{report?.totalEquipments || 0} remota(s) ativa(s) · {isCurrentMonth ? "posição atual" : "posição no fechamento do mês"}</p>
+              <SituationSummary rows={situationRows} total={report?.totalEquipments || 0} />
+              {!!report?.missingHistory && <p role="note" className="mt-3 text-xs text-muted-foreground">{report.missingHistory} remota(s) não possuem histórico suficiente para determinar a situação neste mês e estão identificadas como “Sem histórico no período”.</p>}
+            </>}
           </CardContent>
         </Card>
 
@@ -262,12 +269,16 @@ export default function DashboardPage() {
                   Manutencoes por Tecnico
                 </CardTitle>
                 <CardDescription className="text-sm text-muted-foreground">
-                  Quantidade de manutencoes realizadas por tecnico
+                  Quantidade de atendimentos de todo o histórico por técnico
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
+            <Button type="button" variant="outline" aria-expanded={showTechnicians} onClick={() => setShowTechnicians((value) => !value)}>{showTechnicians ? "Ocultar distribuição por técnico" : "Ver distribuição por técnico"}</Button>
+            {technicianLoading && <p role="status" className="mt-3 text-sm">Carregando distribuição…</p>}
+            {technicianError && <p role="alert" className="mt-3 text-sm">Não foi possível carregar a distribuição. Feche e abra para tentar novamente.</p>}
+            {showTechnicians && !technicianLoading && !technicianError && <>
             {stats?.manutencoesPorTecnico && stats.manutencoesPorTecnico.length > 0 ? (
               <div className="h-75">
                 <ResponsiveContainer width="100%" height="100%">
@@ -298,7 +309,7 @@ export default function DashboardPage() {
                         return null
                       }}
                     />
-                    <Bar dataKey="total" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                    <Bar isAnimationActive={false} dataKey="total" fill="#3b82f6" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -307,6 +318,7 @@ export default function DashboardPage() {
                 <p className="text-sm text-muted-foreground">Sem dados disponiveis</p>
               </div>
             )}
+            </>}
           </CardContent>
         </Card>
       </div>
@@ -364,6 +376,7 @@ export default function DashboardPage() {
                     }}
                   />
                   <Line
+                    isAnimationActive={false}
                     type="monotone"
                     dataKey="total"
                     stroke="#ffffff"

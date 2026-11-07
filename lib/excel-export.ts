@@ -2,6 +2,7 @@ import * as XLSX from "xlsx"
 import type { Maintenance, Equipment } from "./types"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { maintenanceEquipmentData } from "./maintenance-snapshot"
 
 interface ExportData extends Maintenance {
   equipmentData?: Equipment
@@ -12,14 +13,15 @@ export function exportMaintenancesToExcel(
   equipments: Map<string, Equipment>
 ) {
   const data = maintenances.map((m) => {
-    const equipment = equipments.get(m.numeroRemota)
+    const { equipment, sourceLabel } = maintenanceEquipmentData(m, equipments.get(m.numeroRemota))
     
     return {
       "Número da Remota": m.numeroRemota,
       Modelo: equipment?.modelo || "-",
       "Ano de Fabricação": equipment?.anoFabricacao || "-",
       OCM: equipment?.lote || "-",
-      "Situação da Remota": equipment?.situacaoRemota || "-",
+      "Origem dos dados cadastrais": sourceLabel,
+      "Situação após Manutenção": m.situacaoRemota || "Sem situação registrada",
       "Operadora Antes": m.operadoraAntes,
       "Operadora Depois": m.operadoraDepois,
       "Defeito Relatado": m.defeitoRelatado === "Outro" 

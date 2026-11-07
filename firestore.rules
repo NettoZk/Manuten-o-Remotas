@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function activeUser() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ativo == true
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo in ['admin', 'tecnico', 'usuario'];
+    }
+    // Credenciais, índices de unicidade e tentativas de login são privados do servidor.
+    match /users/{id} { allow read, write: if false; }
+    match /{collection}/{id} {
+      allow read: if collection in ['equipments', 'maintenances', 'defects', 'services', 'operators', 'equipment_status'] && activeUser();
+      // O Admin SDK grava após validar autorização, payload e transação nas rotas de API.
+      allow write: if false;
+    }
+    match /audit_logs/{id} {
+      allow read: if activeUser() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo == 'admin';
+      allow write: if false;
+    }
+  }
+}
