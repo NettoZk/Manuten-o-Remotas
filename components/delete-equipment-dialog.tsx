@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
-import { deleteEquipment, archiveEquipment } from "@/lib/services"
+import { deleteEquipment, archiveEquipment, hasMaintenanceHistory } from "@/lib/services"
 import type { Equipment } from "@/lib/types"
 import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
@@ -35,11 +35,20 @@ export function DeleteEquipmentDialog({
   const { user } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const live = useLiveData()
-  const checking = live.loading
-  const hasHistory = equipment ? Boolean(equipment.garantia || equipment.remotaAnteriorId || equipment.substituidaPorId || live.maintenances.some((item) => item.equipmentId === equipment.id || item.numeroRemota === equipment.numeroRemota)) : null
+  const [checking, setChecking] = useState(true)
+  const [historical, setHistorical] = useState(true)
+  const [historyError, setHistoryError] = useState(false)
+  useEffect(() => {
+    let active = true
+    if (!open || !equipment) return
+    setChecking(true); setHistoryError(false)
+    hasMaintenanceHistory(equipment.numeroRemota).then((value) => { if (active) setHistorical(value) }).catch(() => { if (active) setHistoryError(true) }).finally(() => { if (active) setChecking(false) })
+    return () => { active = false }
+  }, [open, equipment])
+  const hasHistory = equipment ? Boolean(equipment.garantia || equipment.remotaAnteriorId || equipment.substituidaPorId || historical) : null
 
   const handleConfirm = async () => {
-    if (!equipment || !user) return
+    if (!equipment || !user || checking || historyError) return
 
     setIsLoading(true)
     try {
@@ -79,6 +88,7 @@ export function DeleteEquipmentDialog({
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-3">
+              {historyError && <p role="alert">Não foi possível verificar o histórico. Feche esta janela e tente novamente antes de continuar.</p>}
               {checking ? (
                 <div className="flex items-center gap-2">
                   <Spinner className="h-4 w-4" />
@@ -111,7 +121,7 @@ export function DeleteEquipmentDialog({
           <AlertDialogCancel disabled={isLoading}>Cancelar</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
-            disabled={isLoading || checking}
+            disabled={isLoading || checking || historyError || Boolean(live.error)}
             className={hasHistory ? "bg-warning text-warning-foreground hover:bg-warning/90" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
           >
             {isLoading ? (

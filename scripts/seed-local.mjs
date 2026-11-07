@@ -23,7 +23,7 @@ for (const [index, numeroRemota] of ["1001", "1002", "1003"].entries()) {
 }
 if (process.argv.includes("--e2e")) {
   const batch = db.batch()
-  for (const number of ["E2E-ATALHO-A", "E2E-ATALHO-B", "E2E-ATALHO-C", "E2E-ATALHO-D", "E2E-OUTRO-TECNICO"]) {
+  for (const number of ["E2E-RASCUNHO-CONFLITO", "E2E-RASCUNHO", "E2E-ATALHO-A", "E2E-ATALHO-B", "E2E-ATALHO-C", "E2E-ATALHO-D", "E2E-OUTRO-TECNICO"]) {
     const at = Timestamp.now()
     const maintenanceId = `manutencao-${number}`
     batch.set(db.collection("equipments").doc(number), { numeroRemota: number, modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Manutenção", estadoRegistro: "ativo", dataCadastro: at, manutencaoId: maintenanceId, emManutencaoPor: number === "E2E-OUTRO-TECNICO" ? "local-admin" : "local-tech" })

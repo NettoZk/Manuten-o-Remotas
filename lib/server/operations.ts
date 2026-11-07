@@ -3,13 +3,17 @@ import { createHash, randomUUID } from "node:crypto"
 import bcrypt from "bcryptjs"
 import { FieldValue, Timestamp, type Transaction } from "firebase-admin/firestore"
 import { z } from "zod"
-import { cleanUndefined, equipmentSchema, finalizationSchema, isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, passwordSchema, roleSchema, userSchema, warrantyReturnSchema } from "@/lib/validation"
+import { cleanUndefined, equipmentSchema, equipmentUpdateSchema, finalizationSchema, isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, isProtectedSituation, normalizedReferenceName, passwordSchema, roleSchema, userSchema, warrantyReturnSchema } from "@/lib/validation"
 import { getAdmin } from "./firebase-admin"
 import { HttpError, type requireUser } from "./http"
 import { getEquipmentSituationReport, recordEquipmentSituation } from "./equipment-situation-history"
 import { monthKey } from "@/lib/dashboard"
 import { isWarrantyImeiChangeSituation, WARRANTY_IMEI_CHANGE_MESSAGE } from "@/lib/equipment-situations"
 import { bulkOperations, type BulkResult } from "@/lib/bulk-movements"
+import { captureEquipmentSnapshot } from "./maintenance-records"
+import { saveDraft } from "./maintenance-drafts"
+import { getBulkReceipt, reserveBulkRun } from "./bulk-runs"
+import { dashboardMetrics, equipmentMovements, maintenancePage, technicianTotals } from "./reporting"
 
 type Actor = Awaited<ReturnType<typeof requireUser>>
 const id = z.string().min(1).max(200).refine((value) => !value.includes("/"), "Identificador inválido")
@@ -42,18 +46,34 @@ export async function executeOperation(operation: string, args: unknown[], actor
   const { db, auth } = getAdmin()
   const equipmentRef = (value: unknown) => db.collection("equipments").doc(id.parse(value))
   switch (operation) {
+    case "getMaintenancePage": return maintenancePage(args[0], args[1])
+    case "getEquipmentMovements": return equipmentMovements(id.parse(args[0]), args[1])
+    case "getMaintenanceTechnicianTotals": return technicianTotals()
+    case "getDashboardMetrics": return dashboardMetrics(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).parse(args[0]))
+    case "getBulkRun":
+      technician(actor)
+      return getBulkReceipt(z.uuid().parse(args[0]), actor.id)
+    case "saveMaintenanceDraft":
+      technician(actor)
+      return saveDraft(id.parse(args[0]), id.parse(args[1]), args[2], args[3], actor.id)
     case "bulkMovements": {
       technician(actor)
       const entries = z.array(z.object({ operation: z.enum(bulkOperations), args: z.array(z.unknown()).max(6) })).min(1).max(50).parse(args[0])
+      const runId = args[1] === undefined ? randomUUID() : z.uuid().parse(args[1])
+      const receipt = await reserveBulkRun(runId, actor.id, entries)
+      if (!receipt.created) return (await getBulkReceipt(runId, actor.id)).results
       const results: BulkResult[] = []
       for (const entry of entries) {
         try { results.push({ ok: true, result: await executeOperation(entry.operation, entry.args, actor) }) }
         catch (error) {
           if (error instanceof HttpError) results.push({ ok: false, error: error.message })
           else if (error instanceof z.ZodError) results.push({ ok: false, error: error.issues[0]?.message || "Dados inválidos" })
-          else { console.error("Falha em movimentação do lote:", error instanceof Error ? error.message : "Erro desconhecido"); results.push({ ok: false, error: "Não foi possível concluir esta movimentação. Consulte o cadastro antes de repetir" }) }
+          else { console.error("Falha em movimentação do lote:", error instanceof Error ? error.message : "Erro desconhecido"); results.push({ ok: false, uncertain: true, error: "Resultado não confirmado. Consulte o cadastro antes de repetir esta movimentação" }) }
         }
+        // Cada confirmação sobrevive à perda da resposta HTTP. Um item sem confirmação nunca é repetido automaticamente.
+        await receipt.ref.update({ results, updatedAt: Timestamp.now() })
       }
+      await receipt.ref.update({ state: "completed", updatedAt: Timestamp.now() })
       return results
     }
     case "getEquipmentSituationReport": {
@@ -231,7 +251,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
     case "updateEquipmentSituationManual": {
       admin(actor)
       const ref = equipmentRef(args[0])
-      const allowed = equipmentSchema.omit({ numeroRemota: true }).partial()
+      const allowed = equipmentUpdateSchema
       const data = operation === "updateEquipmentSituationManual"
         ? z.object({ situacaoRemota: name, motivoAlteracaoSituacao: z.string().trim().max(2000).optional() }).parse(args[1])
         : allowed.parse(args[1])
@@ -242,6 +262,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         if (current.data()?.garantia?.status === "enviada") throw new HttpError(409, "Registre o retorno da garantia antes de editar a remota")
         if (current.data()?.garantia?.status === "separada") throw new HttpError(409, "Confirme o envio ou cancele a separação para garantia antes de editar a remota")
         if (current.data()?.manutencaoId || current.data()?.emManutencaoPor) throw new HttpError(409, "Finalize a manutenção antes de editar o equipamento")
+        equipmentSchema.parse({ ...current.data(), ...data })
         if (data.situacaoRemota) {
           if (operation === "updateEquipmentSituationManual" && data.situacaoRemota === current.data()?.situacaoRemota) throw new HttpError(409, "A situação selecionada é igual à atual")
           if (isMaintenanceSituation(data.situacaoRemota)) throw new HttpError(400, "Use a abertura de manutenção para esta situação")
@@ -304,6 +325,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         const now = Timestamp.now()
         const history = recordEquipmentSituation(tx, eqRef, current, { ...current, situacaoRemota: "Manutenção" }, "maintenance_started", now)
         tx.create(ref, { numeroRemota: current.numeroRemota, equipmentId: eq.id, tecnicoId: actor.id, tecnicoNome: actor.nome,
+          equipmentSnapshot: captureEquipmentSnapshot(current, now, "opening"),
           dataEntrada: now, dataFinalizacao: null, status: "em_andamento", operadoraAntes: current.operadoraAtual, operadoraDepois: current.operadoraAtual,
           ...cleanUndefined({ defeitoRelatado: data.defeitoRelatado, defeitoRelatadoOutro: data.defeitoRelatadoOutro }),
           defeitoEncontrado: "", servicosRealizados: [], observacoes: "", checklist: { leituraSIMCard: "Não testado", firmwareAtualizado: "Não testado", sinal: "Não testado", apnEnergiza: "Não testado", comunicacaoMedidor: "Não testado", comunicacaoIRIS: "Não testado" },
@@ -344,6 +366,7 @@ export async function executeOperation(operation: string, args: unknown[], actor
         const history = recordEquipmentSituation(tx, eqRef, equipment, { ...equipment, situacaoRemota: situation }, forced ? "maintenance_forced" : "maintenance_finalized", now)
         const garantia = isWarrantySeparatedSituation(situation) ? prepareWarranty(tx, actor, eq.id, equipment.numeroRemota, ref.id, data!.motivoGarantia!, now) : undefined
         tx.update(ref, { ...(data ? cleanUndefined(data) : { finalizadoForcadamente: true, finalizadoForcadoPor: actor.id, finalizadoForcadoNome: actor.nome, motivoFinalizacaoForcada: reason }),
+          ...(!current.equipmentSnapshot ? { equipmentSnapshot: captureEquipmentSnapshot(equipment, now, "closing") } : {}),
           situacaoRemota: situation, dataFinalizacao: now, status: "finalizada" })
         tx.update(eqRef, { situacaoAnterior: equipment.situacaoRemota || null, situacaoRemota: situation, situacaoAtualizadaEm: now, situacaoAtualizadaPor: actor.nome,
           ...(garantia ? { garantia } : {}), ...history,
@@ -360,13 +383,22 @@ export async function executeOperation(operation: string, args: unknown[], actor
       admin(actor)
       const collection = ({ Defect: "defects", Service: "services", Operator: "operators", EquipmentSituation: "equipment_status" } as const)[match[2] as "Defect" | "Service" | "Operator" | "EquipmentSituation"]
       const referenceName = collection === "equipment_status" ? name.refine((value) => !isWarrantyImeiChangeSituation(value), WARRANTY_IMEI_CHANGE_MESSAGE) : name
-      if (match[1] === "create") return (await db.collection(collection).add({ nome: referenceName.parse(args[0]), ativo: true })).id
-      const ref = db.collection(collection).doc(id.parse(args[0]))
-      if (match[1] === "delete") {
-        // Preservar referência histórica; o item deixa de estar disponível em novos formulários.
-        await ref.update({ ativo: false })
-      } else await ref.update(z.object({ nome: referenceName.optional(), ativo: z.boolean().optional() }).parse(args[1]))
-      return null
+      const creating = match[1] === "create"
+      const ref = creating ? db.collection(collection).doc() : db.collection(collection).doc(id.parse(args[0]))
+      const data = creating ? { nome: referenceName.parse(args[0]), ativo: true } : match[1] === "delete" ? { ativo: false } : z.object({ nome: referenceName.optional(), ativo: z.boolean().optional() }).parse(args[1])
+      await db.runTransaction(async (tx) => {
+        const current = creating ? null : await tx.get(ref)
+        if (!creating && !current?.exists) throw new HttpError(404, "Item da lista não encontrado")
+        const oldName = String(current?.data()?.nome || "")
+        if (collection === "equipment_status" && isProtectedSituation(oldName) && (data.ativo === false || (data.nome !== undefined && data.nome !== oldName))) throw new HttpError(400, "Esta situação é essencial para os procedimentos e não pode ser renomeada ou desativada")
+        if (data.nome) {
+          const references = await tx.get(db.collection(collection))
+          if (references.docs.some((item) => item.id !== ref.id && normalizedReferenceName(String(item.data().nome || "")) === normalizedReferenceName(data.nome!))) throw new HttpError(409, "Este nome já existe na lista. Edite ou reative o item existente")
+        }
+        if (creating) tx.create(ref, data)
+        else tx.update(ref, data)
+      })
+      return creating ? ref.id : null
     }
   }
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState } from "react"
-import { collection, onSnapshot } from "firebase/firestore"
+import { collection, onSnapshot, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { equipmentFromDoc, maintenanceFromDoc } from "@/lib/firestore-records"
 import { isWarrantyImeiChangeSituation } from "@/lib/equipment-situations"
@@ -33,7 +33,7 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }) {
       ["equipments", "equipments"], ["maintenances", "maintenances"], ["defects", "defects"],
       ["services", "services"], ["operators", "operators"], ["equipment_status", "situations"],
     ] as const
-    const unsubscribes = bindings.map(([source, target]) => onSnapshot(collection(db, source), (snapshot) => {
+    const unsubscribes = bindings.map(([source, target]) => onSnapshot(source === "maintenances" ? query(collection(db, source), where("status", "==", "em_andamento")) : collection(db, source), (snapshot) => {
       if (!active) return
       const records = target === "equipments" ? snapshot.docs.map(equipmentFromDoc).sort((a, b) => b.dataCadastro.getTime() - a.dataCadastro.getTime())
         : target === "maintenances" ? snapshot.docs.map(maintenanceFromDoc).sort((a, b) => b.dataEntrada.getTime() - a.dataEntrada.getTime())

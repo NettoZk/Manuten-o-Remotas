@@ -22,7 +22,7 @@ describe("importação e campos obrigatórios", () => {
     expect(parseEquipmentRow({ ...row, situacaoRemota }).errors.length).toBeGreaterThan(0)
   })
   it("aceita situações operacionais distintas e rejeita condição inválida", () => {
-    for (const name of ["Nova", "Triagem", "Recuperada", "Sucata", "Disponibilizado para estoque", "Disponibilizada para polo"]) expect(parseEquipmentRow({ ...row, situacaoRemota: name }).errors).toEqual([])
+    for (const name of ["Nova", "Triagem", "Recuperada", "Sucata", "Disponibilizado para estoque", "Disponibilizada para polo"]) expect(parseEquipmentRow({ ...row, status: name === "Nova" ? "nova" : "usada", situacaoRemota: name }).errors).toEqual([])
     expect(parseEquipmentRow({ ...row, status: "inexistente" }).errors).toContain("Status inválido. Use nova ou usada")
   })
   it("aplica limites de usuário e tamanho da senha em bytes", () => {

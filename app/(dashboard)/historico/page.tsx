@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
@@ -12,9 +12,11 @@ import { Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { exportMaintenancesToExcel } from "@/lib/excel-export"
+import { maintenanceEquipmentData } from "@/lib/maintenance-snapshot"
+import { getMaintenancePage, getAllMaintenanceResults, getMaintenanceTechnicianTotals, type PageCursor } from "@/lib/services"
 import type { Maintenance, Equipment, Operator, User } from "@/lib/types"
 import { History, Download, Filter, X } from "lucide-react"
-import { format, parseISO } from "date-fns"
+import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
 export default function HistoryPage() {
@@ -22,7 +24,10 @@ export default function HistoryPage() {
   const { hasPermission } = useAuth()
   const live = useLiveData()
   const [maintenances, setMaintenances] = useState<Maintenance[]>([])
-  const [filteredMaintenances, setFilteredMaintenances] = useState<Maintenance[]>([])
+  const filteredMaintenances = maintenances
+  const [cursor, setCursor] = useState<PageCursor | null>(null)
+  const [queryError, setQueryError] = useState(false)
+  const [queryRevision, setQueryRevision] = useState(0)
   const [equipments, setEquipments] = useState<Map<string, Equipment>>(new Map())
   const [operators, setOperators] = useState<Operator[]>([])
   const [technicians, setTechnicians] = useState<User[]>([])
@@ -41,56 +46,34 @@ export default function HistoryPage() {
   useEffect(() => { setProcedureId(new URLSearchParams(window.location.search).get("manutencao")) }, [])
 
   useEffect(() => {
-    setMaintenances(live.maintenances)
     setEquipments(new Map(live.equipments.map((item) => [item.numeroRemota, item])))
     setOperators(live.operators.filter((item) => item.ativo))
-    setLoading(live.loading)
-  }, [live.maintenances, live.equipments, live.operators, live.loading])
+  }, [live.equipments, live.operators])
   useEffect(() => {
-    const names = new Map(live.maintenances.map((item) => [item.tecnicoId, item.tecnicoNome]))
-    setTechnicians([...names].map(([id, nome]) => ({ id, nome, username: "", tipo: "tecnico", ativo: true, criadoEm: new Date(0) })))
-  }, [live.maintenances])
-
+    let active = true
+    getMaintenanceTechnicianTotals().then((totals) => { if (active) setTechnicians(totals.map((item) => ({ id: item.id, nome: item.name, username: "", tipo: "tecnico", ativo: true, criadoEm: new Date(0) }))) }).catch(() => { toast.error("Não foi possível carregar a lista de técnicos") })
+    return () => { active = false }
+  }, [])
+  const filters = { numero: filterNumero.trim(), modelo: filterModelo.trim(), tecnico: filterTecnico, operadora: filterOperadora, dateFrom: filterDateFrom, dateTo: filterDateTo, ...(procedureId ? { procedureId } : {}) }
+  const filtersKey = JSON.stringify(filters)
+  const activeKey = useRef(filtersKey)
+  useEffect(() => { activeKey.current = filtersKey }, [filtersKey])
   useEffect(() => {
-    let filtered = [...maintenances]
-    if (procedureId) filtered = filtered.filter((item) => item.id === procedureId)
-
-    if (filterNumero.trim()) {
-      filtered = filtered.filter((m) =>
-        m.numeroRemota.toLowerCase().includes(filterNumero.toLowerCase())
-      )
-    }
-
-    if (filterModelo.trim()) {
-      filtered = filtered.filter((m) => {
-        const equipment = equipments.get(m.numeroRemota)
-        return equipment?.modelo.toLowerCase().includes(filterModelo.toLowerCase())
-      })
-    }
-
-    if (filterTecnico) {
-      filtered = filtered.filter((m) => m.tecnicoId === filterTecnico)
-    }
-
-    if (filterOperadora) {
-      filtered = filtered.filter(
-        (m) => m.operadoraAntes === filterOperadora || m.operadoraDepois === filterOperadora
-      )
-    }
-
-    if (filterDateFrom) {
-      const fromDate = parseISO(filterDateFrom)
-      filtered = filtered.filter((m) => m.dataEntrada >= fromDate)
-    }
-
-    if (filterDateTo) {
-      const toDate = parseISO(filterDateTo)
-      toDate.setHours(23, 59, 59, 999)
-      filtered = filtered.filter((m) => m.dataEntrada <= toDate)
-    }
-
-    setFilteredMaintenances(filtered)
-  }, [filterNumero, filterModelo, filterTecnico, filterOperadora, filterDateFrom, filterDateTo, maintenances, equipments, procedureId])
+    let active = true
+    setLoading(true); setQueryError(false); setMaintenances([]); setCursor(null)
+    const timer = setTimeout(() => {
+      getMaintenancePage(JSON.parse(filtersKey)).then((page) => { if (active) { setMaintenances(page.records); setCursor(page.cursor) } }).catch(() => { if (active) setQueryError(true) }).finally(() => { if (active) setLoading(false) })
+    }, 250)
+    return () => { active = false; clearTimeout(timer) }
+  }, [filtersKey, queryRevision])
+  async function loadMore() {
+    if (!cursor || loading) return
+    const key = filtersKey
+    setLoading(true); setQueryError(false)
+    try { const page = await getMaintenancePage(filters, cursor); if (activeKey.current === key) { setMaintenances((old) => [...old, ...page.records]); setCursor(page.cursor) } }
+    catch { if (activeKey.current === key) setQueryError(true) }
+    finally { if (activeKey.current === key) setLoading(false) }
+  }
 
   const clearFilters = () => {
     setFilterNumero("")
@@ -102,14 +85,11 @@ export default function HistoryPage() {
   }
 
   const handleExport = async () => {
-    if (filteredMaintenances.length === 0) {
-      toast.error("Nenhuma manutenção para exportar")
-      return
-    }
-
     setExporting(true)
     try {
-      exportMaintenancesToExcel(filteredMaintenances, equipments)
+      const records = await getAllMaintenanceResults(filters)
+      if (!records.length) { toast.error("Nenhuma manutenção para exportar"); return }
+      exportMaintenancesToExcel(records, equipments)
       toast.success("Arquivo Excel gerado com sucesso")
     } catch (error) {
       console.error("Erro ao exportar:", error)
@@ -117,14 +97,6 @@ export default function HistoryPage() {
     } finally {
       setExporting(false)
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex h-96 items-center justify-center">
-        <Spinner className="h-8 w-8" />
-      </div>
-    )
   }
 
   return (
@@ -143,7 +115,7 @@ export default function HistoryPage() {
             ) : (
               <Download className="mr-2 h-4 w-4" />
             )}
-            Exportar Excel
+            Exportar todos os resultados
           </Button>
         )}
       </div>
@@ -157,7 +129,7 @@ export default function HistoryPage() {
                 Manutenções
               </CardTitle>
               <CardDescription>
-                {filteredMaintenances.length} de {maintenances.length} registro(s)
+                {filteredMaintenances.length} registro(s) carregado(s){cursor ? " · há mais registros para consultar" : ""}
               </CardDescription>
             </div>
             <Button
@@ -248,9 +220,11 @@ export default function HistoryPage() {
             </div>
           )}
 
-          {filteredMaintenances.length === 0 ? (
+          {loading && <p role="status" className="py-2 text-sm">Consultando histórico…</p>}
+          {queryError && <p role="alert" className="py-2 text-sm text-destructive">Não foi possível consultar. <button className="underline" onClick={() => setQueryRevision((v) => v + 1)}>Tentar novamente</button></p>}
+          {filteredMaintenances.length === 0 && !loading && !queryError ? (
             <p className="text-center text-muted-foreground py-8">
-              Nenhuma manutenção encontrada
+              {cursor ? "Ainda há registros a pesquisar. Continue a busca para conferir os demais resultados." : "Nenhuma manutenção encontrada"}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -268,11 +242,11 @@ export default function HistoryPage() {
                 </thead>
                 <tbody>
                   {filteredMaintenances.map((maintenance) => {
-                    const equipment = equipments.get(maintenance.numeroRemota)
+                    const { equipment, sourceLabel, historical, complete } = maintenanceEquipmentData(maintenance, equipments.get(maintenance.numeroRemota))
                     return (
                       <tr key={maintenance.id} className="border-b last:border-0">
                         <td className="py-3 font-medium">{maintenance.numeroRemota}</td>
-                        <td className="py-3">{equipment?.modelo || "-"}</td>
+                        <td className="py-3" title={sourceLabel}>{equipment?.modelo || "-"}{(!historical || !complete) && <span className="block text-xs text-muted-foreground">{historical ? "Registro parcial" : "Cadastro atual"}</span>}</td>
                         <td className="py-3">{maintenance.tecnicoNome}</td>
                         <td className="py-3">
                           {maintenance.defeitoEncontrado || maintenance.defeitoRelatado}
@@ -305,6 +279,7 @@ export default function HistoryPage() {
               </table>
             </div>
           )}
+          {cursor && <Button className="mt-4" variant="outline" disabled={loading} onClick={() => void loadMore()}>{filteredMaintenances.length ? "Carregar mais atendimentos" : "Continuar busca"}</Button>}
         </CardContent>
       </Card>
     </div>

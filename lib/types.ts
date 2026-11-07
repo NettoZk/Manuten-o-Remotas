@@ -114,10 +114,25 @@ export interface ChecklistItem {
   comunicacaoIRIS: ChecklistStatus
 }
 
+export interface EquipmentSnapshot {
+  numeroRemota?: string
+  modelo?: string
+  anoFabricacao?: string
+  lote?: string
+  operadoraAtual?: string
+  status?: EquipmentStatus
+  capturedAt: Date
+  source: "opening" | "closing"
+}
+
 export interface Maintenance {
+  draft?: import("./validation").MaintenanceDraft
+  draftVersion?: number
+  draftUpdatedAt?: Date
   id: string
   numeroRemota: string
   equipmentId: string
+  equipmentSnapshot?: EquipmentSnapshot
   tecnicoId: string
   tecnicoNome: string
   dataEntrada: Date

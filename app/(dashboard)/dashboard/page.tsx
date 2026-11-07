@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -9,9 +9,9 @@ import { ReportMonthFilter } from "@/components/report-month-filter"
 import { SituationSummary } from "@/components/situation-summary"
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer } from "recharts"
 import { useLiveData } from "@/contexts/live-data-context"
-import { calculateDashboard, monthKey, monthLabel } from "@/lib/dashboard"
+import { calculateDashboard, displayMaintenanceMetrics, monthKey, monthLabel } from "@/lib/dashboard"
 import { equipmentSituationReport, includeSituationCategories, situationColor } from "@/lib/equipment-situation-report"
-import { getEquipmentSituationReport } from "@/lib/services"
+import { getEquipmentSituationReport, getDashboardMetrics, getMaintenanceTechnicianTotals } from "@/lib/services"
 import type { EquipmentSituationReport } from "@/lib/types"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -25,8 +25,30 @@ export default function DashboardPage() {
   const [reportLoading, setReportLoading] = useState(true)
   const [reportError, setReportError] = useState(false)
   const [reportRevision, setReportRevision] = useState(0)
+  const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof getDashboardMetrics>> | null>(null)
+  const [metricsError, setMetricsError] = useState(false)
+  const [showTechnicians, setShowTechnicians] = useState(false)
+  const [technicianTotals, setTechnicianTotals] = useState<{ name: string; total: number }[]>([])
+  const [technicianLoading, setTechnicianLoading] = useState(false)
+  const [technicianError, setTechnicianError] = useState(false)
+  const historyCache = useRef(new Map<string, { at: number; report: EquipmentSituationReport }>())
+  const ongoingRevision = maintenances.map((item) => item.id).join(",")
   const isCurrentMonth = selectedMonth === monthKey(new Date())
-  const stats = useMemo(() => calculateDashboard(equipments, maintenances, selectedMonth), [equipments, maintenances, selectedMonth])
+  const base = useMemo(() => calculateDashboard(equipments, maintenances, selectedMonth), [equipments, maintenances, selectedMonth])
+  const stats = { ...base, ...metrics, manutencoesPorTecnico: technicianTotals.slice(0, 10) }
+  useEffect(() => {
+    let active = true
+    setMetricsError(false); setMetrics(null)
+    getDashboardMetrics(selectedMonth).then((data) => { if (active) setMetrics(data) }).catch(() => { if (active) setMetricsError(true) })
+    return () => { active = false }
+  }, [selectedMonth, ongoingRevision, reportRevision])
+  useEffect(() => {
+    if (!showTechnicians) return
+    let active = true
+    setTechnicianLoading(true); setTechnicianError(false)
+    getMaintenanceTechnicianTotals().then((data) => { if (active) setTechnicianTotals(data) }).catch(() => { if (active) setTechnicianError(true) }).finally(() => { if (active) setTechnicianLoading(false) })
+    return () => { active = false }
+  }, [showTechnicians, ongoingRevision, reportRevision])
   const currentReport = equipmentSituationReport(equipments, [], monthKey(new Date()))
   const report = isCurrentMonth ? currentReport : historicalReport?.month === selectedMonth ? historicalReport : null
   const situationRows = includeSituationCategories(report?.situations || [], situations)
@@ -38,10 +60,15 @@ export default function DashboardPage() {
     let active = true
     setReportLoading(true)
     setReportError(false)
+    const cached = historyCache.current.get(selectedMonth)
+    if (!isCurrentMonth && cached && Date.now() - cached.at < 60_000) { setHistoricalReport(cached.report); setReportLoading(false); return }
     // Agrupa importações e mudanças em lote; o gráfico atual já reage ao listener.
     const timeout = setTimeout(() => {
       getEquipmentSituationReport(selectedMonth).then((result) => {
-        if (active) setHistoricalReport(result)
+        if (active) {
+          setHistoricalReport(result)
+          if (!isCurrentMonth) { if (historyCache.current.size >= 24) historyCache.current.delete(historyCache.current.keys().next().value!); historyCache.current.set(selectedMonth, { at: Date.now(), report: result }) }
+        }
       }).catch(() => {
         if (active) setReportError(true)
       }).finally(() => {
@@ -49,12 +76,12 @@ export default function DashboardPage() {
       })
     }, 200)
     return () => { active = false; clearTimeout(timeout) }
-  }, [equipments, selectedMonth, loading, error, reportRevision])
+  }, [equipments, selectedMonth, loading, error, reportRevision, isCurrentMonth])
   const refreshing = loading
-  const handleRefresh = refresh
+  const handleRefresh = () => { historyCache.current.clear(); setReportRevision((v) => v + 1); refresh() }
   if (error) return <div role="alert" className="rounded-lg border border-destructive/40 p-6">Não foi possível carregar o dashboard. Use “Tentar novamente” para sincronizar.</div>
 
-  if (loading) {
+  if (loading || (!metrics && !metricsError)) {
     return (
       <div className="flex h-96 items-center justify-center">
         <Spinner className="h-8 w-8 text-primary" />
@@ -73,7 +100,7 @@ export default function DashboardPage() {
     },
     {
       title: "Total de Manutencoes",
-      value: stats?.totalMaintenances || 0,
+      value: displayMaintenanceMetrics(metrics).totalMaintenances,
       description: "Manutencoes registradas",
       icon: Wrench,
       color: "text-blue-500",
@@ -89,7 +116,7 @@ export default function DashboardPage() {
     },
     {
       title: "Finalizadas no Mes",
-      value: stats?.completedThisMonth || 0,
+      value: displayMaintenanceMetrics(metrics).completedThisMonth,
       description: `Concluídas em ${monthLabel(selectedMonth)}`,
       icon: CheckCircle,
       color: "text-success",
@@ -99,6 +126,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      {metricsError && <p role="alert" className="rounded-lg border p-3 text-sm">Não foi possível carregar os indicadores. <button className="underline" onClick={handleRefresh}>Tentar novamente</button></p>}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -241,12 +269,16 @@ export default function DashboardPage() {
                   Manutencoes por Tecnico
                 </CardTitle>
                 <CardDescription className="text-sm text-muted-foreground">
-                  Quantidade de manutencoes realizadas por tecnico
+                  Quantidade de atendimentos de todo o histórico por técnico
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
+            <Button type="button" variant="outline" aria-expanded={showTechnicians} onClick={() => setShowTechnicians((value) => !value)}>{showTechnicians ? "Ocultar distribuição por técnico" : "Ver distribuição por técnico"}</Button>
+            {technicianLoading && <p role="status" className="mt-3 text-sm">Carregando distribuição…</p>}
+            {technicianError && <p role="alert" className="mt-3 text-sm">Não foi possível carregar a distribuição. Feche e abra para tentar novamente.</p>}
+            {showTechnicians && !technicianLoading && !technicianError && <>
             {stats?.manutencoesPorTecnico && stats.manutencoesPorTecnico.length > 0 ? (
               <div className="h-75">
                 <ResponsiveContainer width="100%" height="100%">
@@ -286,6 +318,7 @@ export default function DashboardPage() {
                 <p className="text-sm text-muted-foreground">Sem dados disponiveis</p>
               </div>
             )}
+            </>}
           </CardContent>
         </Card>
       </div>

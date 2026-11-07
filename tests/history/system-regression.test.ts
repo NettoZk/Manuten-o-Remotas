@@ -1,8 +1,8 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 import bcrypt from "bcryptjs"
 import { createHash } from "node:crypto"
 import { deleteApp, getApps } from "firebase-admin/app"
-import { Timestamp } from "firebase-admin/firestore"
+import { FieldValue, Timestamp } from "firebase-admin/firestore"
 import { initializeApp as initializeClientApp, deleteApp as deleteClientApp } from "firebase/app"
 import { getAuth as clientAuth, connectAuthEmulator, signInWithCustomToken } from "firebase/auth"
 import { getFirestore as clientFirestore, connectFirestoreEmulator, getDocs, collection, doc, setDoc, terminate } from "firebase/firestore"
@@ -93,6 +93,24 @@ describe("login, sessão e autorização real da API", () => {
 })
 
 describe("cadastros, referências e administração", () => {
+  it("valida condição e situação após combinar a alteração parcial com o cadastro atual", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    await expect(executeOperation("updateEquipment", [id, { situacaoRemota: "Nova" }], admin)).rejects.toThrow("usada")
+    await expect(executeOperation("updateEquipmentSituationManual", [id, { situacaoRemota: "Nova" }], admin)).rejects.toThrow("usada")
+    const fresh = await executeOperation("createEquipment", [{ ...equipment, numeroRemota: "NOVA-PARCIAL", status: "Nova", situacaoRemota: "Nova" }], admin) as string
+    await expect(executeOperation("updateEquipment", [fresh, { status: "Usada" }], admin)).rejects.toThrow("usada")
+    expect((await db.collection("equipments").doc(fresh).get()).data()?.status).toBe("Nova")
+  })
+  it.each(["Nova", "Triagem", "Manutenção", "Separado para garantia", "Enviado para Garantia"])("preserva a situação essencial %s", async (nome) => {
+    const ref = (await db.collection("equipment_status").where("nome", "==", nome).get()).docs[0]
+    await expect(executeOperation("deleteEquipmentSituation", [ref.id], admin)).rejects.toThrow("essencial")
+    await expect(executeOperation("updateEquipmentSituation", [ref.id, { nome: "Outro nome" }], admin)).rejects.toThrow("essencial")
+    expect((await ref.ref.get()).data()?.ativo).toBe(true)
+  })
+  it("não cria referências duplicadas por variações de maiúsculas e espaços", async () => {
+    await executeOperation("createOperator", ["Operadora de Teste"], admin)
+    await expect(executeOperation("createOperator", ["  operadora  de teste "], admin)).rejects.toThrow("já existe")
+  })
   it("cria, atualiza, redefine senha e exclui usuário sem expor hash", async () => {
     const id = await executeOperation("createUser", ["novo.qa", "teste1234", "Novo QA", "tecnico"], admin) as string
     await expect(executeOperation("createUser", ["novo.qa", "teste1234", "Duplicado", "usuario"], admin)).rejects.toThrow("já está em uso")
@@ -128,15 +146,95 @@ describe("cadastros, referências e administração", () => {
     await expect(executeOperation("updateEquipment", [id, { modelo: "RT-2000" }], tech)).rejects.toThrow("administradores")
   })
   it("desativa referências sem apagar o histórico e recusa uso futuro da referência", async () => {
-    const id = await executeOperation("createEquipment", [equipment], admin) as string
-    await executeOperation("deleteEquipmentSituation", ["ref-1"], admin)
-    expect((await db.collection("equipment_status").doc("ref-1").get()).data()?.ativo).toBe(false)
-    expect((await db.collection("equipments").doc(id).get()).data()?.situacaoRemota).toBe("Triagem")
-    await expect(executeOperation("createEquipment", [{ ...equipment, numeroRemota: "QA-2" }], admin)).rejects.toThrow("Valor indisponível")
+    const id = await executeOperation("createEquipment", [{ ...equipment, situacaoRemota: "Recuperada" }], admin) as string
+    const reference = (await db.collection("equipment_status").where("nome", "==", "Recuperada").get()).docs[0]
+    await executeOperation("deleteEquipmentSituation", [reference.id], admin)
+    expect((await reference.ref.get()).data()?.ativo).toBe(false)
+    expect((await db.collection("equipments").doc(id).get()).data()?.situacaoRemota).toBe("Recuperada")
+    await expect(executeOperation("createEquipment", [{ ...equipment, numeroRemota: "QA-2", situacaoRemota: "Recuperada" }], admin)).rejects.toThrow("Valor indisponível")
   })
 })
 
 describe("procedimentos de manutenção e garantia", () => {
+  it("mantém resultado incerto quando o transporte falha depois de aplicar uma operação do lote", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    const original = db.runTransaction.bind(db)
+    const spy = vi.spyOn(db, "runTransaction").mockImplementationOnce(original).mockImplementationOnce(async (update, options) => { await original(update, options); throw new Error("Conexão caiu após commit") })
+    const runId = "c9c005df-7ea5-4a3f-8f86-a357f645ea6a"
+    try {
+      const result = await executeOperation("bulkMovements", [[{ operation: "createMaintenance", args: [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }] }], runId], tech) as { ok: boolean; uncertain?: boolean }[]
+      expect((await db.collection("maintenances").get()).size).toBe(1)
+      expect(result[0]).toMatchObject({ ok: false, uncertain: true })
+      expect(await executeOperation("getBulkRun", [runId], tech)).toMatchObject({ results: [{ ok: false, uncertain: true }] })
+    } finally { spy.mockRestore() }
+  })
+  it("pagina datas empatadas sem perder itens e aplica filtros ao histórico completo", async () => {
+    const at = Timestamp.fromDate(new Date("2026-10-20T12:00:00Z"))
+    const batch = db.batch()
+    for (let i = 0; i < 85; i++) batch.set(db.collection("maintenances").doc(`page-${String(i).padStart(3, "0")}`), { ...conclusion, numeroRemota: `PAGE-${i}`, tecnicoId: i % 2 ? tech.id : admin.id, tecnicoNome: "QA", status: "finalizada", dataEntrada: at, dataFinalizacao: at, equipmentSnapshot: { ...equipment, modelo: "Histórico", capturedAt: at, source: "opening" } })
+    await batch.commit()
+    const all: string[] = []
+    let cursor: unknown = null
+    do {
+      const page = await executeOperation("getMaintenancePage", [{}, cursor], viewer) as { records: { id: string }[]; cursor: unknown }
+      all.push(...page.records.map((r) => r.id)); cursor = page.cursor
+    } while (cursor)
+    expect(new Set(all).size).toBe(85)
+    expect(all).toHaveLength(85)
+    const filtered = await executeOperation("getMaintenancePage", [{ tecnico: tech.id, modelo: "histórico", dateFrom: "2026-10-20", dateTo: "2026-10-20" }], viewer) as { records: unknown[] }
+    expect(filtered.records).toHaveLength(42)
+    const metrics = await executeOperation("getDashboardMetrics", ["2026-10"], viewer) as { totalMaintenances: number; completedThisMonth: number }
+    expect(metrics.totalMaintenances).toBe(85)
+    expect(metrics.completedThisMonth).toBe(85)
+  })
+  it("retorna timeline ordenada e somente os campos públicos de movimentação", async () => {
+    const { id } = await openMaintenance()
+    const movement = await executeOperation("getEquipmentMovements", [id], viewer) as { records: { action: string; at: string; userName: string; secret?: string }[] }
+    expect(movement.records.map((r) => r.action)).toContain("maintenance_started")
+    await db.collection("audit_logs").doc("private-field").set({ equipmentId: id, action: "equipment_updated", at: Timestamp.now(), userName: "QA", secret: "não expor", userId: admin.id })
+    const next = await executeOperation("getEquipmentMovements", [id], viewer) as typeof movement
+    expect(next.records.every((r) => !r.secret)).toBe(true)
+    await expect(executeOperation("getEquipmentMovements", ["ausente"], viewer)).rejects.toThrow("encontrado")
+  })
+  it("recupera comprovante privado de lote sem executar novamente o mesmo identificador", async () => {
+    const id = await executeOperation("createEquipment", [equipment], admin) as string
+    const entries = [{ operation: "createMaintenance", args: [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }] }]
+    const runId = "2913a9b7-48fe-4ae3-a048-1392aac62358"
+    const result = await executeOperation("bulkMovements", [entries, runId], tech)
+    expect(await executeOperation("bulkMovements", [entries, runId], tech)).toEqual(result)
+    expect((await db.collection("maintenances").get()).size).toBe(1)
+    await expect(executeOperation("getBulkRun", [runId], tech)).resolves.toMatchObject({ results: result, state: "completed" })
+    await expect(executeOperation("getBulkRun", [runId], admin)).rejects.toThrow("outro usuário")
+    await expect(executeOperation("bulkMovements", [[{ operation: "archiveEquipment", args: [id] }], runId], tech)).rejects.toThrow("outros dados")
+  })
+  it("salva rascunho incompleto sem concluir e rejeita versão antiga e outro responsável", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const draft = { ...conclusion, defeitoEncontrado: "", servicosRealizados: [], situacaoRemota: "", observacoes: "Análise parcial da bancada" }
+    await expect(executeOperation("saveMaintenanceDraft", [maintenanceId, id, draft, 0], tech)).resolves.toMatchObject({ version: 1 })
+    await expect(executeOperation("saveMaintenanceDraft", [maintenanceId, id, { ...draft, observacoes: "Texto antigo" }, 0], tech)).rejects.toThrow("outra aba")
+    await expect(executeOperation("saveMaintenanceDraft", [maintenanceId, id, draft, 1], admin)).rejects.toThrow("responsável")
+    const saved = (await db.collection("maintenances").doc(maintenanceId).get()).data()!
+    expect(saved.status).toBe("em_andamento")
+    expect(saved.observacoes).toBe("")
+    expect(saved.draft.observacoes).toBe(draft.observacoes)
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)
+    await expect(executeOperation("saveMaintenanceDraft", [maintenanceId, id, draft, 1], tech)).rejects.toThrow("aberta")
+  })
+  it("registra o cadastro na abertura e preserva a cópia depois de concluir e editar a remota", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const ref = db.collection("maintenances").doc(maintenanceId)
+    expect((await ref.get()).data()?.equipmentSnapshot).toMatchObject({ numeroRemota: equipment.numeroRemota, modelo: "RT-1000", lote: "OCM-QA", anoFabricacao: "2026", source: "opening" })
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)
+    await executeOperation("updateEquipment", [id, { modelo: "MODELO-ALTERADO", lote: "OCM-ALTERADA" }], admin)
+    expect((await ref.get()).data()?.equipmentSnapshot).toMatchObject({ modelo: "RT-1000", lote: "OCM-QA", source: "opening" })
+  })
+  it("identifica captura na conclusão de um atendimento antigo ainda aberto", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const ref = db.collection("maintenances").doc(maintenanceId)
+    await ref.update({ equipmentSnapshot: FieldValue.delete() })
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)
+    expect((await ref.get()).data()?.equipmentSnapshot).toMatchObject({ modelo: "RT-1000", lote: "OCM-QA", source: "closing" })
+  })
   it("permite somente uma manutenção simultânea e bloqueia edição/arquivamento durante o atendimento", async () => {
     const id = await executeOperation("createEquipment", [equipment], admin) as string
     const results = await Promise.allSettled([executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], tech), executeOperation("createMaintenance", [{ equipmentId: id, defeitoRelatado: "Sem comunicação" }], admin)])

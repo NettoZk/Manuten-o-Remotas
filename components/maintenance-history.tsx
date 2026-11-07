@@ -47,6 +47,7 @@ export function MaintenanceHistory({ history }: MaintenanceHistoryProps) {
             <CardDescription>
               {history.length} manutencao(oes) registrada(s)
             </CardDescription>
+            {history.some((item) => !item.equipmentSnapshot) && <p className="mt-1 text-xs text-muted-foreground">Atendimentos antigos podem não ter os dados cadastrais registrados na ocasião.</p>}
           </div>
         </div>
       </CardHeader>
@@ -112,6 +113,7 @@ export function MaintenanceHistory({ history }: MaintenanceHistoryProps) {
                       </span>
                     </p>
                   )}
+                  {maintenance.equipmentSnapshot && <p className="text-xs text-muted-foreground">Dados do atendimento: {maintenance.equipmentSnapshot.modelo || "Modelo não informado"} · OCM {maintenance.equipmentSnapshot.lote || "não informada"}</p>}
                   {maintenance.servicosRealizados.length > 0 && (
                     <p className="text-sm text-muted-foreground">
                       Servicos:{" "}

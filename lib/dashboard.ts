@@ -5,6 +5,9 @@ export function monthKey(date: Date) {
   const parts = monthFormatter.formatToParts(date)
   return `${parts.find((part) => part.type === "year")!.value}-${parts.find((part) => part.type === "month")!.value}`
 }
+export function displayMaintenanceMetrics(metrics: { totalMaintenances: number; completedThisMonth: number } | null) {
+  return { totalMaintenances: metrics?.totalMaintenances ?? "—", completedThisMonth: metrics?.completedThisMonth ?? "—" }
+}
 export function monthLabel(month: string) {
   const [year, number] = month.split("-").map(Number)
   return new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, number - 1, 1)))

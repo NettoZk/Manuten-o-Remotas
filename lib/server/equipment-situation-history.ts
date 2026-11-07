@@ -3,6 +3,7 @@ import { Timestamp, type DocumentData, type DocumentReference, type Transaction 
 import { equipmentSituationReport } from "@/lib/equipment-situation-report"
 import type { Equipment, EquipmentSituationEvent } from "@/lib/types"
 import { getAdmin } from "./firebase-admin"
+import { monthKey } from "@/lib/dashboard"
 
 const historyCollection = "equipment_situation_history"
 type State = DocumentData
@@ -41,14 +42,14 @@ export async function getEquipmentSituationReport(month: string) {
     })))
   }
   const [equipments, history] = await Promise.all([
-    db.collection("equipments").get(), db.collection(historyCollection).get(),
+    untracked.length ? db.collection("equipments").get() : Promise.resolve(existing), month === monthKey(new Date()) ? Promise.resolve(null) : db.collection(historyCollection).get(),
   ])
   const date = (value: Timestamp | undefined) => value?.toDate?.() || new Date(0)
   return equipmentSituationReport(equipments.docs.map((doc) => {
     const data = doc.data()
     return { id: doc.id, dataCadastro: date(data.dataCadastro), situacaoRemota: data.situacaoRemota,
       estadoRegistro: data.estadoRegistro, arquivadoEm: data.arquivadoEm?.toDate?.() } as Equipment
-  }), history.docs.map((doc) => {
+  }), (history?.docs || []).map((doc) => {
     const data = doc.data()
     return { ...data, at: date(data.at), registeredAt: date(data.registeredAt), archivedAt: data.archivedAt?.toDate?.() } as EquipmentSituationEvent
   }), month)

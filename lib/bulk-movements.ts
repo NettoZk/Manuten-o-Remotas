@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { finalizationSchema, warrantyReturnSchema, isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "./validation"
+import { finalizationSchema, warrantyReturnSchema, isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "./validation"
 import { isWarrantyImeiChangeSituation } from "./equipment-situations"
 import type { Equipment } from "./types"
 
@@ -7,7 +7,8 @@ export const bulkActions = ["alterar_situacao", "iniciar_manutencao", "finalizar
 export type BulkAction = typeof bulkActions[number]
 export const bulkOperations = ["updateEquipmentSituationManual", "createMaintenance", "finalizeMaintenance", "sendWarranty", "cancelWarrantyPreparation", "returnWarranty", "archiveEquipment"] as const
 export interface BulkCommand { number: string; operation: typeof bulkOperations[number]; args: unknown[] }
-export interface BulkResult { ok: boolean; error?: string; result?: unknown }
+export interface BulkResult { ok: boolean; error?: string; result?: unknown; uncertain?: boolean }
+export function bulkRequestBytes(entries: Pick<BulkCommand, "operation" | "args">[], runId = "00000000-0000-4000-8000-000000000000") { return new TextEncoder().encode(JSON.stringify({ args: [entries, runId] })).length }
 export interface BulkPreview { row: number; number: string; command?: BulkCommand; errors: string[] }
 export const actionLabels: Record<BulkAction, string> = { alterar_situacao: "Alterar situação", iniciar_manutencao: "Iniciar manutenção", finalizar_manutencao: "Concluir manutenção / separar para garantia", enviar_garantia: "Confirmar envio para garantia", cancelar_separacao: "Cancelar separação para garantia", retornar_garantia: "Registrar retorno da garantia", arquivar: "Arquivar" }
 export const checklistKeys = ["leituraSIMCard", "firmwareAtualizado", "sinal", "apnEnergiza", "comunicacaoMedidor", "comunicacaoIRIS"] as const
@@ -46,6 +47,7 @@ export function buildBulkPreview(action: BulkAction, rows: Record<string, unknow
       if (action === "alterar_situacao") {
         const situation = z.string().trim().min(1, "Informe a situação").max(100).parse(value("situacaoRemota"))
         if (isMaintenanceSituation(situation) || isWarrantySentSituation(situation) || isWarrantySeparatedSituation(situation) || isWarrantyImeiChangeSituation(situation)) throw new Error("Esta situação exige o procedimento de manutenção ou garantia")
+        if (equipment.status === "Usada" && isNewSituation(situation)) throw new Error("Remota usada não pode ter situação Nova")
         if (situation === equipment.situacaoRemota) throw new Error("A situação selecionada é igual à atual")
         operation = "updateEquipmentSituationManual"; args = [equipment.id, { situacaoRemota: situation, motivoAlteracaoSituacao: z.string().max(2000).parse(value("motivoAlteracaoSituacao")) }]
       } else if (action === "iniciar_manutencao") {
@@ -80,7 +82,9 @@ export function buildBulkPreview(action: BulkAction, rows: Record<string, unknow
         if (changed) targets.add(returnedNumber)
         operation = "returnWarranty"; args = [equipment.id, data]
       } else { operation = "archiveEquipment"; args = [equipment.id] }
-      entry.command = { number, operation, args }
+      const command = { number, operation, args }
+      if (bulkRequestBytes([{ operation, args }]) > 28_000) throw new Error("Esta linha excede o tamanho permitido. Reduza os textos")
+      entry.command = command
     } catch (error) {
       entry.errors = error instanceof z.ZodError ? [...new Set(error.issues.map((item) => `${item.path.join(".")}: ${item.message}`))] : [error instanceof Error ? error.message : "Linha inválida"]
     }

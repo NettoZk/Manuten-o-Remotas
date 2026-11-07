@@ -18,7 +18,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { updateEquipmentSituationManual } from "@/lib/services"
-import type { Equipment, Maintenance } from "@/lib/types"
+import type { Equipment } from "@/lib/types"
 import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
 import { EditEquipmentDialog } from "@/components/edit-equipment-dialog"
@@ -28,8 +28,11 @@ import { WarrantyDialog } from "@/components/warranty-dialog"
 import { WarrantyPreparationActions } from "@/components/warranty-preparation-actions"
 import { WarrantyHistory } from "@/components/warranty-history"
 import { BulkMovementDialog } from "@/components/bulk-movement-dialog"
+import { EquipmentTimeline } from "@/components/equipment-timeline"
+import { useEquipmentMaintenanceHistory } from "@/hooks/use-equipment-maintenance-history"
+import { warrantyWaitLabel } from "@/lib/warranty-wait"
 import type { BulkAction } from "@/lib/bulk-movements"
-import { isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
+import { isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "@/lib/validation"
 import { filterEquipmentRegistration, searchEquipments, type EquipmentRegistrationFilter } from "@/lib/equipment-search"
 import { Radio, Search, Eye, History, Calendar, Layers, Signal, Clock, CheckCircle, RefreshCw, Pencil, Trash2, Upload, ShieldCheck, Send, Undo2 } from "lucide-react"
 import { format } from "date-fns"
@@ -65,8 +68,9 @@ export default function EquipmentsPage() {
   const awaitingDispatchCount = equipments.filter((item) => item.estadoRegistro !== "inativo" && item.garantia?.status === "separada").length
   function openBulk(action?: BulkAction) { setBulkInitialAction(action); setShowBulkMovement(true) }
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null)
-  const [equipmentHistory, setEquipmentHistory] = useState<Maintenance[]>([])
-  const loadingHistory = live.loading
+  const history = useEquipmentMaintenanceHistory(selectedEquipment?.numeroRemota)
+  const equipmentHistory = history.records
+  const loadingHistory = history.loading
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
   
   // Estados para modal de alteração de situação
@@ -93,20 +97,17 @@ export default function EquipmentsPage() {
     const current = live.equipments.find((item) => item.id === selectedId)
     if (!current) { setShowDetailsDialog(false); setSelectedEquipment(null); return }
     setSelectedEquipment(current)
-    setEquipmentHistory(live.maintenances.filter((item) => item.equipmentId === current.id || item.numeroRemota === current.numeroRemota))
-  }, [selectedId, live.equipments, live.maintenances])
+  }, [selectedId, live.equipments])
 
   const handleViewDetails = (equipment: Equipment) => {
     detailsRef.current?.scrollTo({ top: 0 })
     setSelectedEquipment(equipment)
     setShowDetailsDialog(true)
-    setEquipmentHistory(live.maintenances.filter((item) => item.equipmentId === equipment.id || item.numeroRemota === equipment.numeroRemota))
   }
 
   const handleCloseDialog = () => {
     setShowDetailsDialog(false)
     setSelectedEquipment(null)
-    setEquipmentHistory([])
   }
 
   const handleOpenChangeSituation = (equipment: Equipment) => {
@@ -292,7 +293,10 @@ export default function EquipmentsPage() {
                       </td>
                       <td className="py-3">
                         {equipment.situacaoRemota ? (
+                          <>
                           <Badge variant="outline">{equipment.situacaoRemota}</Badge>
+                          {warrantyWaitLabel(equipment) && <p className="mt-1 text-xs text-muted-foreground">{warrantyWaitLabel(equipment)}</p>}
+                          </>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
@@ -463,6 +467,9 @@ export default function EquipmentsPage() {
               </Card>
 
               {canMove && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status === "separada" && <div className="flex flex-wrap gap-2"><WarrantyPreparationActions equipment={selectedEquipment} /></div>}
+              {warrantyWaitLabel(selectedEquipment) && <p className="text-sm text-muted-foreground">{warrantyWaitLabel(selectedEquipment)}</p>}
+              <EquipmentTimeline key={selectedEquipment.id} equipmentId={selectedEquipment.id} />
+              {history.error && <p role="alert" className="text-sm text-destructive">Não foi possível carregar o histórico de atendimentos. <button className="underline" onClick={history.retry}>Tentar novamente</button></p>}
               {isAdmin && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status !== "separada" && (selectedEquipment.garantia?.status === "enviada" ? <Button variant="outline" onClick={() => setWarrantyEquipmentId(selectedEquipment.id)}><ShieldCheck className="mr-2 h-4 w-4" />Registrar retorno da garantia</Button> : <div className="space-y-2 text-sm"><p className="text-muted-foreground">Para encaminhar à garantia, conclua a avaliação em manutenção como Separado para garantia. Depois, confirme a saída física em Equipamentos.</p><Button variant="outline" asChild><Link href={`/manutencao?remota=${encodeURIComponent(selectedEquipment.numeroRemota)}`}>Abrir procedimento de manutenção</Link></Button></div>)}
               <WarrantyHistory equipment={selectedEquipment} onViewLinked={(id) => {
                 const linked = live.equipments.find((item) => item.id === id)
@@ -500,6 +507,7 @@ export default function EquipmentsPage() {
                           key={maintenance.id}
                           className="rounded-lg border border-border/50 p-4 transition-colors hover:bg-muted/30"
                         >
+                          {maintenance.equipmentSnapshot && <p className="mb-2 text-xs text-muted-foreground">Dados do atendimento: {maintenance.equipmentSnapshot.modelo || "Modelo não informado"} · OCM {maintenance.equipmentSnapshot.lote || "não informada"}</p>}
                           <div className="flex items-start justify-between">
                             <div className="space-y-2">
                               <div className="flex items-center gap-3">
@@ -625,7 +633,7 @@ export default function EquipmentsPage() {
                   onChange={(e) => setNewSituacao(e.target.value)}
                 >
                   <option value="">Selecione a situação...</option>
-                  {equipmentSituations.filter((item) => !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome) && item.nome !== "Manutenção").map((situation) => (
+                  {equipmentSituations.filter((item) => !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome) && item.nome !== "Manutenção" && !(equipmentToChangeSituation.status === "Usada" && isNewSituation(item.nome))).map((situation) => (
                     <option key={situation.id} value={situation.nome}>
                       {situation.nome}
                     </option>

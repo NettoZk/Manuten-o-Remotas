@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import * as XLSX from "xlsx"
 import { toast } from "sonner"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -10,14 +10,22 @@ import { Textarea } from "@/components/ui/textarea"
 import { Spinner } from "@/components/ui/spinner"
 import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
-import { runBulkMovements } from "@/lib/services"
+import { getBulkRun, runBulkMovements, type BulkReceiptPointer } from "@/lib/services"
 import { actionLabels, buildBulkPreview, bulkActions, checklistKeys, checklistLabels, movementHeaders, movementTemplate, type BulkAction, type BulkPreview, type BulkResult } from "@/lib/bulk-movements"
-import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
+import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "@/lib/validation"
 import type { Equipment } from "@/lib/types"
 
 export function BulkMovementDialog({ equipments, selectedIds, initialAction, initialSituation, onClose, onCompleted }: { equipments: Equipment[]; selectedIds: string[]; initialAction?: BulkAction; initialSituation?: string; onClose: () => void; onCompleted: (numbers: string[]) => void }) {
   const live = useLiveData()
-  const { hasPermission } = useAuth()
+  const { hasPermission, user } = useAuth()
+  const receiptKey = `remotas:last-bulk:${user?.id}`
+  const [lastRun, setLastRun] = useState<{ action: BulkAction; pointers: BulkReceiptPointer[] } | null>(null)
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(receiptKey) || "null")
+      if (saved && bulkActions.includes(saved.action) && Array.isArray(saved.pointers) && saved.pointers.length <= 500 && saved.pointers.every((p: BulkReceiptPointer) => typeof p.runId === "string" && Array.isArray(p.numbers))) setLastRun(saved)
+    } catch { /* Backup local indisponível. */ }
+  }, [receiptKey])
   const isAdmin = hasPermission(["admin"])
   const actions = bulkActions.filter((action) => isAdmin || action === "iniciar_manutencao" || action === "finalizar_manutencao" || action === "enviar_garantia" || action === "cancelar_separacao")
   const selected = equipments.filter((item) => selectedIds.includes(item.id))
@@ -42,6 +50,7 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
     setOutcomes([])
   }
   const choices = live.situations.filter((item) => item.ativo && !isMaintenanceSituation(item.nome)
+    && !(action === "finalizar_manutencao" && isNewSituation(item.nome))
     && !isWarrantySentSituation(item.nome) && (action === "finalizar_manutencao" || !isWarrantySeparatedSituation(item.nome))
     && (action !== "retornar_garantia" || (fields.condicaoRetorno === "Nova" ? item.nome === "Nova" : item.nome !== "Nova")))
   const defects = [...new Set([...live.defects.filter((item) => item.ativo).map((item) => item.nome), "Outro"])]
@@ -84,7 +93,12 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
     if (!valid.length || saving) return
     setSaving(true); setDone(0); setOutcomes([])
     try {
-      const result = await runBulkMovements(valid.map((item) => item.command!), setDone)
+      const saved = { action, pointers: [] as BulkReceiptPointer[] }
+      const result = await runBulkMovements(valid.map((item) => item.command!), setDone, (pointer) => {
+        saved.pointers.push(pointer)
+        setLastRun({ ...saved })
+        try { localStorage.setItem(receiptKey, JSON.stringify(saved)) } catch { /* Comprovantes continuam no servidor. */ }
+      })
       const completed = [...preview.filter((item) => !item.command).map((item) => ({ ok: false, number: item.number, row: item.row, error: item.errors.join("; ") })), ...result.map((item, index) => ({ ...item, number: valid[index].number, row: valid[index].row }))]
       setOutcomes(completed); onCompleted(completed.filter((item) => item.ok).map((item) => item.number))
       const successes = completed.filter((item) => item.ok).length
@@ -93,8 +107,22 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
     } catch (error) { toast.error(error instanceof Error ? error.message : "Falha no lote. Consulte os cadastros antes de repetir") }
     finally { setSaving(false) }
   }
+  async function recoverLastRun() {
+    if (!lastRun || saving) return
+    setSaving(true)
+    try {
+      const records = await Promise.all(lastRun.pointers.map(async (pointer) => {
+        try { return { pointer, results: (await getBulkRun(pointer.runId)).results } }
+        catch (error) { return { pointer, results: pointer.numbers.map(() => ({ ok: false, uncertain: true, error: error instanceof Error ? error.message : "Não foi possível consultar este lote" })) } }
+      }))
+      let row = 1
+      setAction(lastRun.action)
+      setPreview([])
+      setOutcomes(records.flatMap(({ pointer, results }) => pointer.numbers.map((number, index) => ({ ...results[index], number, row: row++ }))))
+    } finally { setSaving(false) }
+  }
   function downloadOutcome() {
-    const rows = outcomes.length ? outcomes.map((item) => ({ numeroRemota: item.number, acao: action, resultado: item.ok ? "Concluída" : "Pendente", mensagem: item.error || "Concluída" }))
+    const rows = outcomes.length ? outcomes.map((item) => ({ numeroRemota: item.number, acao: action, resultado: item.ok ? "Concluída" : item.uncertain ? "Verificar resultado" : "Pendente", mensagem: item.error || "Concluída" }))
       : preview.map((item) => ({ numeroRemota: item.number, acao: action, resultado: item.command ? "Pronta para executar" : "Impedida", mensagem: item.errors.join("; ") }))
     const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "Resultado")
     XLSX.writeFile(workbook, `resultado_${action}.xlsx`)
@@ -103,6 +131,7 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
     <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{directSend ? "Confira as remotas selecionadas e confirme somente as que estão saindo fisicamente para a garantia. Cada uma mantém sua avaliação técnica vinculada." : directCancel ? "Cancele a separação antes da saída física. Informe a justificativa; as remotas retornarão para Triagem, preservando a avaliação e o histórico." : "Valide os dados e confira o resultado de cada remota. As regras e permissões de cada procedimento continuam sendo aplicadas."}</DialogDescription></DialogHeader>
       <fieldset disabled={saving} className="space-y-4">
+        {lastRun && <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3"><p className="flex-1 text-xs text-muted-foreground">Comprovantes do último lote disponíveis por 7 dias. Consulte antes de repetir itens sem confirmação.</p><Button type="button" variant="outline" onClick={() => void recoverLastRun()}>Consultar último lote</Button></div>}
         <label className="block space-y-1 text-sm">Ação<select aria-label="Ação do lote" className={selectClass} value={action} onChange={(event) => { setAction(event.target.value as BulkAction); setFields({ ...Object.fromEntries(checklistKeys.map((key) => [key, "Não testado"])), condicaoRetorno: "Usada" }); setNewNumbers({}); setPreview([]); setOutcomes([]); setSheets({}); setSheetName("") }}>{actions.map((item) => <option key={item} value={item}>{actionLabels[item]}</option>)}</select></label>
         <div role="group" aria-label="Forma de preenchimento" className="flex gap-2"><Button type="button" variant={mode === "common" ? "default" : "outline"} onClick={() => { setMode("common"); setPreview([]); setOutcomes([]) }}>Mesmos dados para o lote</Button><Button type="button" variant={mode === "file" ? "default" : "outline"} onClick={() => { setMode("file"); setPreview([]); setOutcomes([]) }}>Dados por planilha</Button></div>
         {mode === "file" ? <div className="space-y-3 rounded-lg border p-3">

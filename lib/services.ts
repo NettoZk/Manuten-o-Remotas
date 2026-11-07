@@ -1,4 +1,4 @@
-import { collection, getDocs, query, where } from "firebase/firestore"
+import { collection, getDocs, query, where, limit } from "firebase/firestore"
 import { db } from "./firebase"
 import { apiRequest } from "./api-client"
 import { equipmentFromDoc, maintenanceFromDoc } from "./firestore-records"
@@ -6,26 +6,38 @@ import { isWarrantyImeiChangeSituation } from "./equipment-situations"
 import type { Equipment, Maintenance, User, UserRole, Defect, Service, Operator, EquipmentSituation, EquipmentSituationReport, Warranty } from "./types"
 import type { FinalizationInput, WarrantyReturnInput } from "./validation"
 import type { BulkCommand, BulkResult } from "./bulk-movements"
+import { bulkRequestBytes } from "./bulk-movements"
 
-export async function runBulkMovements(commands: BulkCommand[], onProgress?: (done: number) => void): Promise<BulkResult[]> {
+export interface BulkReceiptPointer { runId: string; numbers: string[] }
+export async function getBulkRun(runId: string) { return operation<{ state: string; results: BulkResult[] }>("getBulkRun", runId) }
+export async function runBulkMovements(commands: BulkCommand[], onProgress?: (done: number) => void, onReceipt?: (pointer: BulkReceiptPointer) => void): Promise<BulkResult[]> {
   const results: BulkResult[] = []
   for (let offset = 0; offset < commands.length;) {
     const batch: Pick<BulkCommand, "operation" | "args">[] = []
     while (offset + batch.length < commands.length && batch.length < 20) {
       const { operation: name, args } = commands[offset + batch.length]
       const next = { operation: name, args }
-      if (new TextEncoder().encode(JSON.stringify({ args: [[...batch, next]] })).length > 28_000) {
-        if (!batch.length) throw new Error("Uma linha excede o tamanho permitido. Reduza os textos antes de enviar")
+      if (bulkRequestBytes([...batch, next]) > 28_000) {
         break
       }
       batch.push(next)
     }
+    if (!batch.length) {
+      results.push({ ok: false, error: "Esta linha excede o tamanho permitido. Reduza os textos antes de enviar" })
+      offset++; onProgress?.(offset); continue
+    }
+    const runId = crypto.randomUUID()
+    onReceipt?.({ runId, numbers: commands.slice(offset, offset + batch.length).map((item) => item.number) })
     try {
-      const result = await operation<BulkResult[]>("bulkMovements", batch)
+      const result = await operation<BulkResult[]>("bulkMovements", batch, runId)
       if (!Array.isArray(result) || result.length !== batch.length) throw new Error("O servidor não confirmou todos os resultados. Consulte os cadastros antes de repetir")
       results.push(...result)
     }
-    catch (error) { results.push(...batch.map(() => ({ ok: false, error: error instanceof Error ? error.message : "Falha no envio. Consulte os cadastros antes de repetir" }))) }
+    catch (error) {
+      let recovered: BulkResult[] | undefined
+      try { const receipt = await getBulkRun(runId); if (receipt.results?.length === batch.length) recovered = receipt.results } catch { /* Pode ainda estar em processamento; consulta manual permanece disponível. */ }
+      results.push(...(recovered || batch.map(() => ({ ok: false, uncertain: true, error: `${error instanceof Error ? error.message : "Falha no envio"}. Resultado não confirmado; consulte o lote antes de repetir` }))))
+    }
     offset += batch.length
     onProgress?.(offset)
   }
@@ -65,10 +77,31 @@ export async function updateEquipment(equipmentId: string, data: Partial<Omit<Eq
 export async function updateEquipmentWithLog(equipmentId: string, data: { modelo?: string; status?: "Nova" | "Usada"; situacaoRemota?: string; observacoes?: string }, _userId: string, _userName: string) { await operation("updateEquipmentWithLog", equipmentId, data) }
 export async function deleteEquipment(equipmentId: string) { await operation("deleteEquipment", equipmentId) }
 export async function archiveEquipment(equipmentId: string, _userId: string, _userName: string) { await operation("archiveEquipment", equipmentId) }
-export async function hasMaintenanceHistory(numeroRemota: string) { return !(await getDocs(query(collection(db, "maintenances"), where("numeroRemota", "==", numeroRemota)))).empty }
+export async function hasMaintenanceHistory(numeroRemota: string) { return !(await getDocs(query(collection(db, "maintenances"), where("numeroRemota", "==", numeroRemota), limit(1)))).empty }
+export interface HistoryFilters { numero?: string; modelo?: string; tecnico?: string; operadora?: string; dateFrom?: string; dateTo?: string; procedureId?: string }
+export interface PageCursor { seconds: number; nanoseconds: number; id: string }
+function maintenanceFromApi(data: Maintenance) { return maintenanceFromDoc({ id: data.id, data: () => data }) }
+export async function getMaintenancePage(filters: HistoryFilters, cursor?: PageCursor | null) {
+  const page = await operation<{ records: Maintenance[]; cursor: PageCursor | null }>("getMaintenancePage", filters, cursor)
+  return { ...page, records: page.records.map(maintenanceFromApi) }
+}
+export async function getAllMaintenanceResults(filters: HistoryFilters) {
+  const records: Maintenance[] = []
+  let cursor: PageCursor | null = null
+  do { const page = await getMaintenancePage(filters, cursor); records.push(...page.records); cursor = page.cursor } while (cursor)
+  return records
+}
+export async function getDashboardMetrics(month: string) {
+  const result = await operation<{ totalMaintenances: number; inProgress: number; completedThisMonth: number; recentMaintenances: Maintenance[]; manutencoesPorMes: { mes: string; total: number }[] }>("getDashboardMetrics", month)
+  return { ...result, recentMaintenances: result.recentMaintenances.map(maintenanceFromApi) }
+}
+export function getMaintenanceTechnicianTotals() { return operation<{ id: string; name: string; total: number }[]>("getMaintenanceTechnicianTotals") }
+export interface EquipmentMovement { id: string; action: string; userName: string; at: string; situation: string | null; reason: string | null }
+export function getEquipmentMovements(id: string, cursor?: PageCursor | null) { return operation<{ records: EquipmentMovement[]; cursor: PageCursor | null }>("getEquipmentMovements", id, cursor) }
 export async function updateEquipmentSituationManual(equipmentId: string, data: { situacaoAnterior: string | undefined; situacaoRemota: string; situacaoAtualizadaPor: string; motivoAlteracaoSituacao?: string }) { await operation("updateEquipmentSituationManual", equipmentId, data) }
 export async function createMaintenance(data: Omit<Maintenance, "id" | "dataEntrada" | "dataFinalizacao" | "status">, _situacaoAtual?: string) { return operation<string>("createMaintenance", data) }
 export async function finalizeMaintenance(maintenanceId: string, equipmentId: string, data: FinalizationInput) { await operation("finalizeMaintenance", maintenanceId, equipmentId, data) }
+export async function saveMaintenanceDraft(maintenanceId: string, equipmentId: string, data: import("./validation").MaintenanceDraft, expectedVersion: number) { return operation<{ version: number; updatedAt: string }>("saveMaintenanceDraft", maintenanceId, equipmentId, data, expectedVersion) }
 export async function forceFinalizeMaintenance(maintenanceId: string, equipmentId: string, _userId: string, _userName: string, motivo: string) { await operation("forceFinalizeMaintenance", maintenanceId, equipmentId, null, null, motivo) }
 export async function getMaintenancesByEquipment(numeroRemota: string): Promise<Maintenance[]> {
   return (await getDocs(query(collection(db, "maintenances"), where("numeroRemota", "==", numeroRemota)))).docs.map(maintenanceFromDoc).sort((a, b) => b.dataEntrada.getTime() - a.dataEntrada.getTime())

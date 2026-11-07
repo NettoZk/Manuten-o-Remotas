@@ -8,6 +8,14 @@ const obsolete = "IMEI alterado na garantia"
 const equipment = { numeroRemota: "NOVO-IMEI", modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-1", operadoraAtual: "Claro", status: "Nova" }
 
 describe("troca de IMEI como vínculo de garantia", () => {
+  it("impede Usada/Nova no cadastro e na planilha", () => {
+    expect(equipmentSchema.safeParse({ ...equipment, status: "Usada", situacaoRemota: "Nova" }).success).toBe(false)
+    expect(parseEquipmentRow({ ...equipment, status: "usada", situacaoRemota: "Nova" }).errors.join()).toContain("usada")
+  })
+  it("não permite que a conclusão técnica classifique a remota como Nova", () => {
+    const final = { defeitoEncontrado: "Sem sinal", servicosRealizados: ["Teste de bancada"], operadoraDepois: "Claro", observacoes: "", situacaoRemota: "Nova", checklist: { leituraSIMCard: "OK", firmwareAtualizado: "OK", sinal: "OK", apnEnergiza: "OK", comunicacaoMedidor: "OK", comunicacaoIRIS: "OK" } }
+    expect(finalizationSchema.safeParse(final).success).toBe(false)
+  })
   it("exige avaliação e motivo na separação, bloqueando envio direto e nova separação pelo retorno", () => {
     const final = { defeitoEncontrado: "Sem sinal", servicosRealizados: ["Teste de bancada"], operadoraDepois: "Claro", observacoes: "", situacaoRemota: "Separado para garantia", checklist: { leituraSIMCard: "OK", firmwareAtualizado: "OK", sinal: "Falha", apnEnergiza: "OK", comunicacaoMedidor: "Falha", comunicacaoIRIS: "Falha" } }
     expect(isWarrantySeparatedSituation("  Separada  para a Garantia ")).toBe(true)

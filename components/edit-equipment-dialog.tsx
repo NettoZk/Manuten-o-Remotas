@@ -16,7 +16,7 @@ import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
 import { updateEquipmentWithLog } from "@/lib/services"
-import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation } from "@/lib/validation"
+import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "@/lib/validation"
 import type { Equipment, EquipmentSituation, EquipmentStatus } from "@/lib/types"
 import { useAuth } from "@/contexts/auth-context"
 import { Pencil } from "lucide-react"
@@ -135,7 +135,7 @@ export function EditEquipmentDialog({
                 <select
                   className="flex h-11 w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as EquipmentStatus)}
+                  onChange={(e) => { const next = e.target.value as EquipmentStatus; setStatus(next); if (next === "Usada" && isNewSituation(situacaoRemota)) setSituacaoRemota("") }}
                   required
                 >
                   <option value="Nova">Nova</option>
@@ -149,9 +149,10 @@ export function EditEquipmentDialog({
                   className="flex h-11 w-full rounded-lg border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={situacaoRemota}
                   onChange={(e) => setSituacaoRemota(e.target.value)}
+                  required
                 >
                   <option value="">Selecione...</option>
-                  {equipmentSituations.filter((item) => !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome)).map((situation) => (
+                  {equipmentSituations.filter((item) => !isMaintenanceSituation(item.nome) && !isWarrantySentSituation(item.nome) && !isWarrantySeparatedSituation(item.nome) && !(status === "Usada" && isNewSituation(item.nome))).map((situation) => (
                     <option key={situation.id} value={situation.nome}>
                       {situation.nome}
                     </option>

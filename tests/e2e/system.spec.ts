@@ -16,6 +16,50 @@ function excel(rows: Record<string, unknown>[]) {
   return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer
 }
 
+test("rascunho incompleto sobrevive ao recarregamento sem concluir o atendimento", async ({ page }) => {
+  await login(page, "teste.tecnico")
+  await page.goto("/manutencao?remota=E2E-RASCUNHO")
+  await page.getByLabel("Observações do atendimento", { exact: true }).fill("Texto parcial a preservar depois de recarregar")
+  await page.getByRole("button", { name: "Salvar rascunho", exact: true }).click()
+  await expect(page.getByRole("status").filter({ hasText: "Rascunho salvo" })).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel("Observações do atendimento", { exact: true })).toHaveValue("Texto parcial a preservar depois de recarregar")
+  await expect(page.getByLabel("Situação após a manutenção", { exact: false })).toHaveValue("")
+  await expect(page.getByRole("button", { name: "Finalizar Manutenção", exact: true })).toBeVisible()
+})
+
+test("preserva o texto local da aba em conflito mesmo depois de recarregar", async ({ page }) => {
+  await login(page, "teste.tecnico")
+  const url = "/manutencao?remota=E2E-RASCUNHO-CONFLITO"
+  await page.goto(url)
+  const other = await page.context().newPage()
+  await other.goto(url)
+  await expect(other.getByLabel("Observações do atendimento", { exact: true })).toBeVisible()
+  await page.route("**/api/data/saveMaintenanceDraft", (route) => route.abort())
+  await page.getByLabel("Observações do atendimento", { exact: true }).fill("Texto exclusivo da aba A sem conexão")
+  await page.getByRole("button", { name: "Salvar rascunho", exact: true }).click()
+  await other.getByLabel("Observações do atendimento", { exact: true }).fill("Texto confirmado pela aba B no servidor")
+  await other.getByRole("button", { name: "Salvar rascunho", exact: true }).click()
+  await expect(other.getByRole("status").filter({ hasText: "Rascunho salvo" })).toBeVisible()
+  await expect(page.getByText(/Rascunho atualizado em outra aba/)).toBeVisible()
+  page.on("dialog", (dialog) => dialog.accept())
+  await page.reload()
+  await expect(page.getByLabel("Observações do atendimento", { exact: true })).toHaveValue("Texto exclusivo da aba A sem conexão")
+  await expect(page.getByRole("button", { name: "Carregar versão salva", exact: true })).toBeVisible()
+  await page.getByLabel("Observações do atendimento", { exact: true }).fill("Texto exclusivo da aba A com ajuste durante conflito")
+  await page.reload()
+  await expect(page.getByLabel("Observações do atendimento", { exact: true })).toHaveValue("Texto exclusivo da aba A com ajuste durante conflito")
+  await expect(page.getByRole("button", { name: "Carregar versão salva", exact: true })).toBeVisible()
+  await other.close()
+})
+
+test("indica totais indisponíveis quando a consulta dos indicadores falha", async ({ page }) => {
+  await page.route("**/api/data/getDashboardMetrics", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Falha de teste dos indicadores" }) }))
+  await login(page)
+  await expect(page.getByRole("alert").filter({ hasText: "Não foi possível carregar os indicadores" })).toBeVisible()
+  await expect(page.getByText("—", { exact: true })).toHaveCount(2)
+})
+
 test("cancela duas separações pelo atalho, exige motivo e preserva a avaliação sem registrar saída", async ({ page }) => {
   await login(page, "teste.tecnico")
   await page.getByRole("link", { name: "Equipamentos", exact: true }).click()
@@ -37,6 +81,10 @@ test("cancela duas separações pelo atalho, exige motivo e preserva a avaliaç�
   await confirm.click()
   await expect(dialog.getByText("Resultado: 2 concluída(s) · 0 pendente(s)", { exact: true })).toBeVisible()
   await dialog.getByRole("button", { name: "Fechar", exact: true }).click()
+  await page.getByRole("button", { name: "Movimentação em massa", exact: true }).click()
+  await dialog.getByRole("button", { name: "Consultar último lote", exact: true }).click()
+  await expect(dialog.getByText("Resultado: 2 concluída(s) · 0 pendente(s)", { exact: true })).toBeVisible()
+  await dialog.getByRole("button", { name: "Fechar", exact: true }).click()
   for (const number of ["E2E-SEP-CANCEL-ATALHO-A", "E2E-SEP-CANCEL-ATALHO-B"]) {
     const row = page.getByRole("row").filter({ has: page.getByRole("button", { name: `Ver remota ${number}`, exact: true }) })
     await expect(row.getByText("Triagem", { exact: true })).toBeVisible()
@@ -47,6 +95,8 @@ test("cancela duas separações pelo atalho, exige motivo e preserva a avaliaç�
   await expect(dialog.getByText("Justificativa: Equipamentos serão reavaliados na bancada antes de qualquer envio", { exact: true })).toBeVisible()
   await expect(dialog.getByText(/^Envio:/)).toHaveCount(0)
   await expect(dialog.getByRole("link", { name: "Ver manutenção do envio", exact: true })).toHaveCount(1)
+  await dialog.getByText("Linha do tempo de movimentações", { exact: true }).click()
+  await expect(dialog.getByText("Separação cancelada", { exact: true })).toBeVisible()
 })
 
 test("técnico avalia, separa e confirma a saída sem abrir outra manutenção", async ({ page }) => {
