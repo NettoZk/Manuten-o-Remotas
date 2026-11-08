@@ -378,6 +378,24 @@ describe("procedimentos de manutenção e garantia", () => {
     await expect(executeOperation("transferMaintenance", [maintenanceId, id, viewer.id, "Tentativa de escolher um destino sem perfil técnico", version], admin)).rejects.toThrow("ativo")
     await expect(executeOperation("transferMaintenance", [maintenanceId, id, admin.id, "Uma justificativa válida para transferência", version], tech)).rejects.toThrow("administradores")
   })
+  it("novo responsável conclui normalmente o mesmo atendimento transferido, sem encerramento forçado", async () => {
+    const { id, maintenanceId } = await openMaintenance()
+    const saved = { ...conclusion, observacoes: "Avaliação iniciada pelo primeiro técnico e continuada pelo novo responsável" }
+    await executeOperation("saveMaintenanceDraft", [maintenanceId, id, saved, 0], tech)
+    const before = (await db.collection("maintenances").doc(maintenanceId).get()).data()!
+    const version = (await db.collection("equipments").doc(id).get()).data()!.operationVersion
+    await executeOperation("transferMaintenance", [maintenanceId, id, admin.id, "Continuidade do atendimento durante a ausência do técnico", version], admin)
+    await expect(executeOperation("finalizeMaintenance", [maintenanceId, id, saved], tech)).rejects.toThrow("responsável")
+    await executeOperation("finalizeMaintenance", [maintenanceId, id, saved], admin)
+    const after = (await db.collection("maintenances").doc(maintenanceId).get()).data()!
+    expect(after.status).toBe("finalizada")
+    expect(after.finalizadoForcadamente).not.toBe(true)
+    expect(after.dataEntrada.isEqual(before.dataEntrada)).toBe(true)
+    expect(after.tecnicoAberturaId).toBe(tech.id)
+    expect(after.tecnicoId).toBe(admin.id)
+    expect(after.observacoes).toBe(saved.observacoes)
+    expect((await db.collection("maintenances").where("equipmentId", "==", id).get()).size).toBe(1)
+  })
   it("retifica conclusão preservando original, data e snapshot; descrição posterior não muda a situação atual", async () => {
     const { id, maintenanceId } = await openMaintenance()
     await executeOperation("finalizeMaintenance", [maintenanceId, id, conclusion], tech)

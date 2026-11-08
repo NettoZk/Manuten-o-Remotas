@@ -80,6 +80,48 @@ test("revisão técnica mostra antes e depois dos complementos Outro", async ({ 
   await expect(page.getByText("Falha revisada de antena → Falha conferida de antena", { exact: true })).toBeVisible()
 })
 
+test("continuidade por outro responsável usa transferência e conclusão normal com o mesmo rascunho", async ({ page }) => {
+  await login(page)
+  await page.goto("/manutencao")
+  await page.getByRole("button", { name: "Ver e transferir manutenção da remota E2E-CONTINUAR-OUTRO", exact: true }).click()
+  await expect(page.getByText("Transfira a responsabilidade para continuar este atendimento, mantendo a abertura e o rascunho.", { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Finalizar Forçadamente (Admin)", exact: true })).toHaveCount(0)
+  await page.getByRole("button", { name: "Transferir responsável", exact: true }).click()
+  const dialog = page.getByRole("dialog")
+  await dialog.getByLabel("Novo responsável", { exact: true }).selectOption("local-admin")
+  await dialog.getByLabel("Motivo da transferência", { exact: true }).fill("Administrador continuará o trabalho já iniciado pelo técnico")
+  await dialog.getByRole("button", { name: "Confirmar transferência", exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.getByLabel("Observações do atendimento", { exact: true })).toHaveValue("Rascunho original preservado para continuidade por outro responsável")
+  await page.getByRole("button", { name: "Finalizar Manutenção", exact: true }).click()
+  await expect(page.getByText("Finalizada", { exact: true })).toBeVisible()
+  await expect(page.getByText("Finalização Forçada", { exact: true })).toHaveCount(0)
+})
+
+test("transferência iniciada pelo modo consulta libera a continuidade para o novo responsável", async ({ page }) => {
+  await login(page)
+  await page.goto("/manutencao")
+  await page.getByRole("button", { name: "Ver e transferir manutenção da remota E2E-CONTINUAR-CONSULTA", exact: true }).locator("..").getByRole("button", { name: "Ver", exact: true }).click()
+  await expect(page.getByText("Modo visualização - Histórico e cadastro da remota", { exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Transferir responsável", exact: true }).click()
+  const dialog = page.getByRole("dialog")
+  await dialog.getByLabel("Novo responsável", { exact: true }).selectOption("local-admin")
+  await dialog.getByLabel("Motivo da transferência", { exact: true }).fill("Administrador assumirá a continuidade depois de consultar o atendimento")
+  await dialog.getByRole("button", { name: "Confirmar transferência", exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.getByRole("button", { name: "Salvar rascunho", exact: true })).toBeVisible()
+  await expect(page.getByLabel("Observações do atendimento", { exact: true })).toHaveValue("Rascunho original preservado para continuidade por outro responsável")
+})
+
+test("técnico consulta atendimento de outro e recebe orientação de transferência sem promessa de edição", async ({ page }) => {
+  await login(page, "teste.tecnico")
+  await page.goto("/manutencao")
+  await page.getByRole("button", { name: "Consultar manutenção da remota E2E-OUTRO-TECNICO", exact: true }).click()
+  await expect(page.getByText("Para continuar este atendimento, solicite a um administrador a transferência para o seu usuário.", { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Finalizar Manutenção", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /Finalizar Forçadamente/ })).toHaveCount(0)
+})
+
 test("administrador transfere a manutenção sem encerrá-la", async ({ page }) => {
   await login(page)
   await page.goto("/manutencao?remota=E2E-TRANSFER-RUN")

@@ -23,6 +23,13 @@ for (const [index, numeroRemota] of ["1001", "1002", "1003"].entries()) {
 }
 if (process.argv.includes("--e2e")) {
   const batch = db.batch()
+  for (const number of ["E2E-CONTINUAR-OUTRO", "E2E-CONTINUAR-CONSULTA"]) {
+    const maintenanceId = `manutencao-${number}`, at = Timestamp.now()
+    const checklist = { leituraSIMCard: "Não testado", firmwareAtualizado: "Não testado", sinal: "Não testado", apnEnergiza: "Não testado", comunicacaoMedidor: "Não testado", comunicacaoIRIS: "Não testado" }
+    batch.set(db.collection("equipments").doc(number), { numeroRemota: number, modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Manutenção", estadoRegistro: "ativo", dataCadastro: at, manutencaoId: maintenanceId, emManutencaoPor: "local-tech", emManutencaoNome: "Técnico de testes" })
+    batch.set(db.collection("maintenances").doc(maintenanceId), { equipmentId: number, numeroRemota: number, tecnicoId: "local-tech", tecnicoNome: "Técnico de testes", status: "em_andamento", dataEntrada: at, dataFinalizacao: null, defeitoRelatado: "Sem comunicação", defeitoEncontrado: "", servicosRealizados: [], operadoraAntes: "Claro", operadoraDepois: "Claro", observacoes: "", checklist,
+      draft: { defeitoEncontrado: "Sem comunicação", defeitoEncontradoOutro: "", servicosRealizados: ["Atualização de firmware"], servicosRealizadosOutro: "", operadoraDepois: "Claro", situacaoRemota: "Recuperada", motivoGarantia: "", observacoes: "Rascunho original preservado para continuidade por outro responsável", checklist }, draftVersion: 1 })
+  }
   batch.set(db.collection("equipments").doc("E2E-REINCIDENTE"), { numeroRemota: "E2E-REINCIDENTE", modelo: "RT-1000", anoFabricacao: "2026", lote: "OCM-E2E", operadoraAtual: "Claro", status: "Usada", situacaoRemota: "Recuperada", estadoRegistro: "ativo", dataCadastro: Timestamp.now() })
   for (const index of [1, 2]) batch.set(db.collection("maintenances").doc(`reincidente-${index}`), { equipmentId: "E2E-REINCIDENTE", numeroRemota: "E2E-REINCIDENTE", tecnicoId: "local-tech", tecnicoNome: "Técnico de testes", status: "finalizada", dataEntrada: Timestamp.now(), dataFinalizacao: Timestamp.now(), situacaoRemota: "Recuperada", defeitoRelatado: "Sem comunicação", defeitoEncontrado: "Sem comunicação", servicosRealizados: ["Atualização de firmware"], operadoraAntes: "Claro", operadoraDepois: "Claro", observacoes: "", checklist: {} })
   {

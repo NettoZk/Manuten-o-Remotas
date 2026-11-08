@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(using-superpowers)",
+      "Bash(git -C \"C:/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas/.openclaude/worktrees/agent-a9a4f283\" status --short --branch)",
+      "Bash(git -C \"C:/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas/.openclaude/worktrees/agent-a9a4f283\" log -8 --oneline --decorate)",
+      "Bash(git -C \"/c/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas\" status --short)",
+      "Bash(git -C \"/c/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas\" diff --stat)",
+      "Bash(git -C \"/c/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas\" diff --check)",
+      "Bash(pnpm --version)",
+      "Bash(node:*)",
+      "Bash(git -C \"C:/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas/.openclaude/worktrees/agent-a9a4f283\" ls-files)",
+      "Bash(git -C \"C:/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas/.openclaude/worktrees/agent-a9a4f283\" ls-files 'docs/**' 'CLAUDE.md' 'AGENTS.md' '.github/**')",
+      "Bash(npm audit:*)",
+      "Bash(npm ls:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(RUN_FIREBASE_TESTS=true FIREBASE_PROJECT_ID=demo-remotas-tests FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 node \"/c/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas/node_modules/vitest/vitest.mjs\" run)",
+      "Bash(RUN_SITUATION_HISTORY_TESTS=true FIREBASE_PROJECT_ID=demo-remotas-history FIRESTORE_EMULATOR_HOST=127.0.0.1:8181 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9199 GOOGLE_APPLICATION_CREDENTIALS='' FIREBASE_CLIENT_EMAIL='' FIREBASE_PRIVATE_KEY='' node \"/c/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas/node_modules/firebase-tools/lib/bin/firebase.js\" emulators:exec --project demo-remotas-history --only auth,firestore --config firebase.history-tests.json --log-verbosity QUIET \"node \\\\\"C:/Users/adeuv/OneDrive/Documentos/Manuten-o-Remotas/node_modules/vitest/vitest.mjs\\\\\" run\")",
+      "Bash(npm:*)",
+      "Skill(verification-before-completion)"
+    ]
+  }
+}

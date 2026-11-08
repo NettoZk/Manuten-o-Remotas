@@ -9,7 +9,13 @@ import { toast } from "sonner"
 import type { Equipment, Maintenance } from "@/lib/types"
 import { MaintenanceRectification } from "@/components/maintenance-rectification"
 
-export function MaintenanceActions({ maintenance, equipment }: { maintenance: Maintenance; equipment: Equipment }) {
+type MaintenanceActionsProps = {
+  maintenance: Maintenance
+  equipment: Equipment
+  onTransferred?: (targetId: string) => void
+}
+
+export function MaintenanceActions({ maintenance, equipment, onTransferred }: MaintenanceActionsProps) {
   const { user } = useAuth()
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState("")
@@ -25,7 +31,7 @@ export function MaintenanceActions({ maintenance, equipment }: { maintenance: Ma
     finally { setSaving(false) }
   }
   return <div className="flex flex-wrap gap-2">
-    {user?.tipo === "admin" && <MaintenanceTransfer maintenance={maintenance} equipment={equipment} />}
+    {user?.tipo === "admin" && <MaintenanceTransfer maintenance={maintenance} equipment={equipment} onTransferred={onTransferred} />}
     <Button variant="outline" type="button" onClick={() => { setVersion(equipment.operationVersion || 0); setReason(""); setOpen(true) }}>Cancelar abertura</Button>
     <Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value) }}><DialogContent>
       <DialogHeader><DialogTitle>Cancelar abertura de manutenção</DialogTitle><DialogDescription>Remota {equipment.numeroRemota}. Use para uma abertura feita por engano. O atendimento ficará registrado como cancelado, com sua justificativa, e a remota será liberada.</DialogDescription></DialogHeader>
@@ -35,7 +41,7 @@ export function MaintenanceActions({ maintenance, equipment }: { maintenance: Ma
   </div>
 }
 
-function MaintenanceTransfer({ maintenance, equipment }: { maintenance: Maintenance; equipment: Equipment }) {
+function MaintenanceTransfer({ maintenance, equipment, onTransferred }: MaintenanceActionsProps) {
   const [version, setVersion] = useState(equipment.operationVersion || 0)
   const [open, setOpen] = useState(false), [saving, setSaving] = useState(false), [loading, setLoading] = useState(false)
   const [reason, setReason] = useState(""), [target, setTarget] = useState("")
@@ -50,7 +56,12 @@ function MaintenanceTransfer({ maintenance, equipment }: { maintenance: Maintena
   async function save() {
     if (!target || saving || reason.trim().length < 10) return
     setSaving(true)
-    try { await transferMaintenance(maintenance.id, equipment.id, target, reason, version); setOpen(false); toast.success("Responsável transferido; atendimento e rascunho preservados") }
+    try {
+      await transferMaintenance(maintenance.id, equipment.id, target, reason, version)
+      setOpen(false)
+      onTransferred?.(target)
+      toast.success("Responsável transferido; atendimento e rascunho preservados")
+    }
     catch (error) { toast.error(error instanceof Error ? error.message : "Não foi possível transferir") }
     finally { setSaving(false) }
   }
