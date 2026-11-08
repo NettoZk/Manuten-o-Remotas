@@ -5,18 +5,25 @@ import { equipmentFromDoc, maintenanceFromDoc } from "./firestore-records"
 import { isWarrantyImeiChangeSituation } from "./equipment-situations"
 import type { Equipment, Maintenance, User, UserRole, Defect, Service, Operator, EquipmentSituation, EquipmentSituationReport, Warranty } from "./types"
 import type { FinalizationInput, WarrantyReturnInput } from "./validation"
-import type { BulkCommand, BulkResult } from "./bulk-movements"
+import type { BulkCommand, BulkResult, BulkTransportCommand } from "./bulk-movements"
 import { bulkRequestBytes } from "./bulk-movements"
 
-export interface BulkReceiptPointer { runId: string; numbers: string[] }
+export interface BulkReceiptPointer { runId: string; numbers: string[]; sourceRows?: number[] }
+export function getRecurrenceReport(days: number, equipmentId?: string) { return operation<import("./recurrence").RecurrenceEntry[]>("getRecurrenceReport", days, equipmentId) }
+export interface OperationBatch { id: string; executionId?: string; userName: string; createdAt: string; count: number; state: string; successes?: number }
+export interface OperationBatchItem { id: string; row: number; number?: string; numberInferred?: boolean; sourceRow?: number; operation: string; args: unknown[]; ok: boolean; uncertain?: boolean; error?: string; equipmentId?: string; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null; procedure?: import("./movement-preview").ProcedureSnapshot; reversedAt?: string; reversedBy?: string; reversalReason?: string; hasCommittedChange?: boolean }
+export function getBatchHistory() { return operation<OperationBatch[]>("getBatchHistory") }
+export function getBatchItems(batchId: string) { return operation<OperationBatchItem[]>("getBatchItems", batchId) }
+export async function reverseBatchItem(batchId: string, itemId: string, reason: string) { await operation("reverseBatchItem", batchId, itemId, reason) }
 export async function getBulkRun(runId: string) { return operation<{ state: string; results: BulkResult[] }>("getBulkRun", runId) }
 export async function runBulkMovements(commands: BulkCommand[], onProgress?: (done: number) => void, onReceipt?: (pointer: BulkReceiptPointer) => void): Promise<BulkResult[]> {
   const results: BulkResult[] = []
+  const executionId = crypto.randomUUID()
   for (let offset = 0; offset < commands.length;) {
-    const batch: Pick<BulkCommand, "operation" | "args">[] = []
+    const batch: BulkTransportCommand[] = []
     while (offset + batch.length < commands.length && batch.length < 20) {
-      const { operation: name, args } = commands[offset + batch.length]
-      const next = { operation: name, args }
+      const { operation: name, args, expectedVersion, number, sourceRow } = commands[offset + batch.length]
+      const next = { operation: name, args, number, sourceRow: sourceRow ?? offset + batch.length + 2, ...(expectedVersion !== undefined ? { expectedVersion } : {}) }
       if (bulkRequestBytes([...batch, next]) > 28_000) {
         break
       }
@@ -27,9 +34,9 @@ export async function runBulkMovements(commands: BulkCommand[], onProgress?: (do
       offset++; onProgress?.(offset); continue
     }
     const runId = crypto.randomUUID()
-    onReceipt?.({ runId, numbers: commands.slice(offset, offset + batch.length).map((item) => item.number) })
+    onReceipt?.({ runId, numbers: batch.map((item) => item.number!), sourceRows: batch.map((item) => item.sourceRow!) })
     try {
-      const result = await operation<BulkResult[]>("bulkMovements", batch, runId)
+      const result = await operation<BulkResult[]>("bulkMovements", batch, runId, executionId)
       if (!Array.isArray(result) || result.length !== batch.length) throw new Error("O servidor não confirmou todos os resultados. Consulte os cadastros antes de repetir")
       results.push(...result)
     }
@@ -58,7 +65,14 @@ export async function deleteUser(userId: string) { await operation("deleteUser",
 export async function createEquipment(data: Omit<Equipment, "id" | "dataCadastro">) { return operation<string>("createEquipment", data) }
 export async function getEquipmentSituationReport(month: string) { return operation<EquipmentSituationReport>("getEquipmentSituationReport", month) }
 export async function returnWarranty(equipmentId: string, data: WarrantyReturnInput) { await operation("returnWarranty", equipmentId, data) }
+export async function dispatchEquipment(equipmentId: string, data: { type: "polo" | "estoque"; destination: string; recipientName: string; notes?: string }, version: number) { await operation("dispatchEquipment", equipmentId, data, version) }
+export async function receiveEquipment(equipmentId: string, movementId: string, notes: string, version: number) { await operation("receiveEquipment", equipmentId, movementId, notes, version) }
+export function getPhysicalMovements(equipmentId: string) { return operation<(Record<string, string> & { id: string })[]>("getPhysicalMovements", equipmentId) }
+export async function rectifyWarrantyReturn(equipmentId: string, warrantyId: string, data: WarrantyReturnInput, reason: string, version: number) { await operation("rectifyWarrantyReturn", equipmentId, warrantyId, data, reason, version) }
 export async function sendWarranty(equipmentId: string, warrantyId: string) { await operation("sendWarranty", equipmentId, warrantyId) }
+export async function correctWarrantyDispatch(equipmentId: string, warrantyId: string, reason: string, physicalNotOccurred: boolean, version: number) { await operation("correctWarrantyDispatch", equipmentId, warrantyId, reason, physicalNotOccurred, version) }
+export interface WarrantyRevision { id: string; at: string; userName: string; reason: string; action: string; before: Record<string, unknown>; after: Record<string, unknown> }
+export function getWarrantyRevisions(warrantyId: string) { return operation<WarrantyRevision[]>("getWarrantyRevisions", warrantyId) }
 export async function cancelWarrantyPreparation(equipmentId: string, warrantyId: string, reason: string) { await operation("cancelWarrantyPreparation", equipmentId, warrantyId, reason) }
 export async function getWarrantyHistory(equipmentId: string): Promise<Warranty[]> {
   type Dates = "separadaEm" | "enviadaEm" | "retornadaEm" | "canceladaEm"
@@ -67,7 +81,8 @@ export async function getWarrantyHistory(equipmentId: string): Promise<Warranty[
 }
 export async function getEquipmentByNumber(numeroRemota: string): Promise<Equipment | null> {
   const snapshot = await getDocs(query(collection(db, "equipments"), where("numeroRemota", "==", numeroRemota)))
-  return snapshot.empty ? null : equipmentFromDoc(snapshot.docs[0])
+  const valid = snapshot.docs.filter((doc) => !doc.data().cadastroAnulado).sort((a, b) => Number(a.data().estadoRegistro === "inativo") - Number(b.data().estadoRegistro === "inativo"))
+  return valid.length ? equipmentFromDoc(valid[0]) : null
 }
 export async function getEquipments(includeInactive = false): Promise<Equipment[]> {
   const equipments = (await getDocs(collection(db, "equipments"))).docs.map(equipmentFromDoc)
@@ -77,7 +92,9 @@ export async function updateEquipment(equipmentId: string, data: Partial<Omit<Eq
 export async function updateEquipmentWithLog(equipmentId: string, data: { modelo?: string; status?: "Nova" | "Usada"; situacaoRemota?: string; observacoes?: string }, _userId: string, _userName: string) { await operation("updateEquipmentWithLog", equipmentId, data) }
 export async function deleteEquipment(equipmentId: string) { await operation("deleteEquipment", equipmentId) }
 export async function archiveEquipment(equipmentId: string, _userId: string, _userName: string) { await operation("archiveEquipment", equipmentId) }
+export async function restoreEquipment(equipmentId: string, reason: string, version: number) { await operation("restoreEquipment", equipmentId, reason, version) }
 export async function hasMaintenanceHistory(numeroRemota: string) { return !(await getDocs(query(collection(db, "maintenances"), where("numeroRemota", "==", numeroRemota), limit(1)))).empty }
+export async function hasEquipmentHistory(equipmentId: string) { return operation<boolean>("hasEquipmentHistory", equipmentId) }
 export interface HistoryFilters { numero?: string; modelo?: string; tecnico?: string; operadora?: string; dateFrom?: string; dateTo?: string; procedureId?: string }
 export interface PageCursor { seconds: number; nanoseconds: number; id: string }
 function maintenanceFromApi(data: Maintenance) { return maintenanceFromDoc({ id: data.id, data: () => data }) }
@@ -92,7 +109,7 @@ export async function getAllMaintenanceResults(filters: HistoryFilters) {
   return records
 }
 export async function getDashboardMetrics(month: string) {
-  const result = await operation<{ totalMaintenances: number; inProgress: number; completedThisMonth: number; recentMaintenances: Maintenance[]; manutencoesPorMes: { mes: string; total: number }[] }>("getDashboardMetrics", month)
+  const result = await operation<{ totalMaintenances: number; cancelledMaintenances: number; inProgress: number; completedThisMonth: number; recentMaintenances: Maintenance[]; manutencoesPorMes: { mes: string; total: number }[] }>("getDashboardMetrics", month)
   return { ...result, recentMaintenances: result.recentMaintenances.map(maintenanceFromApi) }
 }
 export function getMaintenanceTechnicianTotals() { return operation<{ id: string; name: string; total: number }[]>("getMaintenanceTechnicianTotals") }
@@ -101,6 +118,12 @@ export function getEquipmentMovements(id: string, cursor?: PageCursor | null) { 
 export async function updateEquipmentSituationManual(equipmentId: string, data: { situacaoAnterior: string | undefined; situacaoRemota: string; situacaoAtualizadaPor: string; motivoAlteracaoSituacao?: string }) { await operation("updateEquipmentSituationManual", equipmentId, data) }
 export async function createMaintenance(data: Omit<Maintenance, "id" | "dataEntrada" | "dataFinalizacao" | "status">, _situacaoAtual?: string) { return operation<string>("createMaintenance", data) }
 export async function finalizeMaintenance(maintenanceId: string, equipmentId: string, data: FinalizationInput) { await operation("finalizeMaintenance", maintenanceId, equipmentId, data) }
+export async function cancelMaintenance(maintenanceId: string, equipmentId: string, reason: string, version: number) { await operation("cancelMaintenance", maintenanceId, equipmentId, reason, version) }
+export function getAssignableTechnicians() { return operation<{ id: string; nome: string }[]>("getAssignableTechnicians") }
+export async function transferMaintenance(maintenanceId: string, equipmentId: string, targetId: string, reason: string, version: number) { await operation("transferMaintenance", maintenanceId, equipmentId, targetId, reason, version) }
+export async function rectifyMaintenance(maintenanceId: string, equipmentId: string, data: FinalizationInput, reason: string, version: number) { await operation("rectifyMaintenance", maintenanceId, equipmentId, data, reason, version) }
+export interface MaintenanceRevision { id: string; at: string; userName: string; reason: string; before: Maintenance; after: Maintenance; changedResult: boolean }
+export function getMaintenanceRevisions(maintenanceId: string) { return operation<MaintenanceRevision[]>("getMaintenanceRevisions", maintenanceId) }
 export async function saveMaintenanceDraft(maintenanceId: string, equipmentId: string, data: import("./validation").MaintenanceDraft, expectedVersion: number) { return operation<{ version: number; updatedAt: string }>("saveMaintenanceDraft", maintenanceId, equipmentId, data, expectedVersion) }
 export async function forceFinalizeMaintenance(maintenanceId: string, equipmentId: string, _userId: string, _userName: string, motivo: string) { await operation("forceFinalizeMaintenance", maintenanceId, equipmentId, null, null, motivo) }
 export async function getMaintenancesByEquipment(numeroRemota: string): Promise<Maintenance[]> {

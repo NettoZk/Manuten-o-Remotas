@@ -1,0 +1,2 @@
+# Preservar o arquivo PDF como binário, sem normalização de fim de linha.
+*.pdf binary

@@ -87,6 +87,8 @@ export function ForceFinishedDialog({
               </DialogDescription>
             </div>
           </div>
+
+          <p className="text-sm text-muted-foreground">Para trocar de responsável e continuar o trabalho, use Transferir responsável. A transferência mantém esta manutenção aberta e preserva o rascunho.</p>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -105,7 +107,7 @@ export function ForceFinishedDialog({
             <Textarea
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}
-              placeholder="Ex: Técnico não está mais disponível, remota precisa ser reatribuída..."
+              placeholder="Descreva por que este atendimento precisa ser encerrado excepcionalmente"
               rows={3}
               className="resize-none"
             />

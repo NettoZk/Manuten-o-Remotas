@@ -9,12 +9,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { FieldGroup, Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
-import { Search, Plus, Clock, Radio, Eye, ArrowRight, Lock, AlertTriangle } from "lucide-react"
+import { Search, Plus, Clock, Radio, Eye, ArrowRight, Lock } from "lucide-react"
 import { createMaintenance } from "@/lib/services"
 import type { Equipment, Maintenance, Defect } from "@/lib/types"
 import { NewEquipmentDialog } from "@/components/new-equipment-dialog"
 import { MaintenanceForm } from "@/components/maintenance-form"
 import { EquipmentInfo } from "@/components/equipment-info"
+import { MaintenanceActions } from "@/components/maintenance-actions"
+import { MaintenanceResultFields } from "@/components/maintenance-result-fields"
 import { MaintenanceHistory } from "@/components/maintenance-history"
 import { useEquipmentMaintenanceHistory } from "@/hooks/use-equipment-maintenance-history"
 import { ForceFinishedDialog } from "@/components/force-finalize-dialog"
@@ -31,7 +33,7 @@ export default function MaintenancePage() {
   const [selectedEquipmentId, setSelectedEquipmentId] = useState<string | null>(null)
   const equipment = live.equipments.find((item) => item.id === selectedEquipmentId) || null
   const initialSearchApplied = useRef(false)
-  const history = useEquipmentMaintenanceHistory(equipment?.numeroRemota)
+  const history = useEquipmentMaintenanceHistory(equipment?.numeroRemota, equipment?.operationVersion)
   const maintenanceHistory = history.records
   const currentMaintenance = maintenanceHistory.find((item) => item.status === "em_andamento") || null
   const defects = live.defects.filter((item) => item.ativo)
@@ -218,10 +220,11 @@ export default function MaintenancePage() {
                         <Button
                           size="sm"
                           onClick={() => handleSelectRemotaFromList(maintenance)}
+                          aria-label={`${maintenance.tecnicoId === user?.id ? "Continuar" : isAdmin ? "Ver e transferir" : "Consultar"} manutenção da remota ${maintenance.numeroRemota}`}
                           className="gap-1"
                         >
                           <ArrowRight className="h-4 w-4" />
-                          Continuar
+                          {maintenance.tecnicoId === user?.id ? "Continuar" : isAdmin ? "Ver e transferir" : "Consultar"}
                         </Button>
                       </div>
                     </div>
@@ -285,18 +288,27 @@ export default function MaintenancePage() {
                     Modo visualização - Histórico e cadastro da remota
                   </span>
                 </div>
-                <Button
+                {(!currentMaintenance || currentMaintenance.tecnicoId === user?.id || isAdmin) && <Button
                   size="sm"
                   variant="outline"
                   onClick={() => setViewMode("edit")}
                 >
-                  Iniciar/Continuar Manutenção
-                </Button>
+                  {currentMaintenance ? currentMaintenance.tecnicoId === user?.id ? "Continuar manutenção" : "Ver opções de transferência" : "Iniciar manutenção"}
+                </Button>}
               </CardContent>
             </Card>
           )}
 
           <EquipmentInfo equipment={equipment} />
+          {currentMaintenance && <MaintenanceActions maintenance={currentMaintenance} equipment={equipment} onTransferred={(targetId) => { if (targetId === user?.id) setViewMode("edit") }} />}
+          {currentMaintenance && currentMaintenance.tecnicoId !== user?.id && <Card className="border-warning/30 bg-warning/5">
+            <CardContent className="space-y-3 py-6">
+              <h3 className="font-semibold">Atendimento sob responsabilidade de {currentMaintenance.tecnicoNome}</h3>
+              <p className="text-sm text-muted-foreground">{isAdmin ? "Transfira a responsabilidade para continuar este atendimento, mantendo a abertura e o rascunho." : "Para continuar este atendimento, solicite a um administrador a transferência para o seu usuário."}</p>
+              {currentMaintenance.draft && <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Consultar rascunho salvo · somente leitura</summary><fieldset disabled className="mt-3"><MaintenanceResultFields value={currentMaintenance.draft} onChange={() => {}} resultLocked /></fieldset></details>}
+              {isAdmin && <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm">Encerramento excepcional</summary><p className="my-3 text-sm text-muted-foreground">A finalização forçada encerra o atendimento e devolve a remota para Triagem. Para continuar o trabalho com outro responsável, utilize a transferência acima.</p><Button variant="destructive" size="sm" onClick={() => { setMaintenanceToForceFinalize(currentMaintenance); setEquipmentToForceFinalize(equipment); setShowForceFinalize(true) }}>Finalizar Forçadamente (Admin)</Button></details>}
+            </CardContent>
+          </Card>}
 
           {viewMode === "edit" && equipment.estadoRegistro !== "inativo" && (
             <>
@@ -323,28 +335,8 @@ export default function MaintenancePage() {
                         <p className="mt-2 text-sm text-muted-foreground">
                           Somente o técnico responsável pode finalizar esta manutenção.
                         </p>
-                        {isAdmin && equipment.manutencaoId && (
-                          <div className="mt-4">
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => {
-                                const ongoingMaintenance = maintenanceHistory.find(
-                                  (m) => m.id === equipment.manutencaoId
-                                )
-                                if (ongoingMaintenance) {
-                                  setMaintenanceToForceFinalize(ongoingMaintenance)
-                                  setEquipmentToForceFinalize(equipment)
-                                  setShowForceFinalize(true)
-                                }
-                              }}
-                              className="gap-2"
-                            >
-                              <AlertTriangle className="h-4 w-4" />
-                              Finalizar Forçadamente (Admin)
-                            </Button>
-                          </div>
-                        )}
+                        <p className="mt-2 text-sm text-muted-foreground">O atendimento ainda não foi carregado. Atualize os dados para consultar o responsável e as opções de transferência.</p>
+                        <Button variant="outline" className="mt-3" onClick={live.refresh}>Atualizar atendimento</Button>
                       </div>
                     </div>
                   </CardContent>
@@ -360,44 +352,7 @@ export default function MaintenancePage() {
                     operators={operators}
                     onFinalized={handleMaintenanceFinalized}
                   />
-                ) : (
-                  /* Manutenção de outro técnico - mostrar aviso */
-                  <Card className="border-warning/30 bg-warning/5">
-                    <CardContent className="py-6">
-                      <div className="flex items-start gap-4">
-                        <div className="rounded-full bg-warning/10 p-3">
-                          <AlertTriangle className="h-6 w-6 text-warning" />
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-warning">
-                            Manutenção de Outro Técnico
-                          </h3>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            Esta manutenção foi iniciada por <strong>{currentMaintenance.tecnicoNome}</strong>.
-                            Você não pode editar esta manutenção.
-                          </p>
-                          {isAdmin && (
-                            <div className="mt-4">
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => {
-                                  setMaintenanceToForceFinalize(currentMaintenance)
-                                  setEquipmentToForceFinalize(equipment)
-                                  setShowForceFinalize(true)
-                                }}
-                                className="gap-2"
-                              >
-                                <AlertTriangle className="h-4 w-4" />
-                                Finalizar Forçadamente (Admin)
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
+                ) : null
               ) : (
                 <StartMaintenanceCard
                   defects={defects}
@@ -408,7 +363,7 @@ export default function MaintenancePage() {
             </>
           )}
 
-          {history.loading ? <p role="status" className="text-sm">Carregando histórico…</p> : history.error ? <p role="alert" className="text-sm text-destructive">Não foi possível carregar o histórico. <button className="underline" onClick={history.retry}>Tentar novamente</button></p> : <MaintenanceHistory history={maintenanceHistory} />}
+          {history.loading ? <p role="status" className="text-sm">Carregando histórico…</p> : history.error ? <p role="alert" className="text-sm text-destructive">Não foi possível carregar o histórico. <button className="underline" onClick={history.retry}>Tentar novamente</button></p> : <MaintenanceHistory history={maintenanceHistory} equipment={equipment || undefined} />}
         </>
       )}
 

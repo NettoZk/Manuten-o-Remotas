@@ -17,6 +17,11 @@ export function exportMaintenancesToExcel(
     
     return {
       "Número da Remota": m.numeroRemota,
+      "Estado do atendimento": m.status === "cancelada" ? "Cancelada" : m.status === "finalizada" ? "Finalizada" : "Em andamento",
+      "Motivo do cancelamento": m.motivoCancelamento || "",
+      "Retificações": m.revisionCount || 0,
+      "Última retificação": m.retificadaEm ? format(m.retificadaEm, "dd/MM/yyyy HH:mm", { locale: ptBR }) : "",
+      "Motivo da retificação": m.motivoRetificacao || "",
       Modelo: equipment?.modelo || "-",
       "Ano de Fabricação": equipment?.anoFabricacao || "-",
       OCM: equipment?.lote || "-",

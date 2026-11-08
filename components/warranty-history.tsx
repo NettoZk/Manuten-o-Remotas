@@ -8,8 +8,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
 import { getWarrantyHistory } from "@/lib/services"
 import type { Equipment, Warranty } from "@/lib/types"
+import { WarrantyRevisionHistory } from "@/components/warranty-corrections"
+import { WarrantyDialog } from "@/components/warranty-dialog"
+import { useLiveData } from "@/contexts/live-data-context"
+import { useAuth } from "@/contexts/auth-context"
 
 export function WarrantyHistory({ equipment, onViewLinked }: { equipment: Equipment; onViewLinked: (id: string) => void }) {
+  const live = useLiveData(), { hasPermission } = useAuth()
+  const [correction, setCorrection] = useState<Warranty | null>(null)
+  const original = correction ? live.equipments.find((item) => item.id === correction.equipmentId) : undefined
   const [records, setRecords] = useState<Warranty[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -22,8 +29,8 @@ export function WarrantyHistory({ equipment, onViewLinked }: { equipment: Equipm
     setError(false)
     getWarrantyHistory(equipment.id).then((items) => { if (active) setRecords(items) }).catch(() => { if (active) setError(true) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [equipment.id, warrantyId, warrantyStatus, revision])
-  return <Card className="border-border/50">
+  }, [equipment.id, equipment.operationVersion, warrantyId, warrantyStatus, revision])
+  return <><Card className="border-border/50">
     <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4 text-primary" />Histórico de garantia</CardTitle></CardHeader>
     <CardContent className="space-y-3">
       {equipment.remotaAnteriorId && <div className="rounded-lg bg-muted/30 p-3 text-sm">Originada de retorno da garantia. <Button variant="link" className="h-auto px-0" onClick={() => onViewLinked(equipment.remotaAnteriorId!)}>Ver remota anterior {equipment.remotaAnteriorNumero}</Button></div>}
@@ -35,7 +42,9 @@ export function WarrantyHistory({ equipment, onViewLinked }: { equipment: Equipm
         {record.maintenanceId ? <Button variant="link" asChild className="h-auto px-0"><Link href={`/historico?manutencao=${encodeURIComponent(record.maintenanceId)}`}>Ver manutenção do envio</Link></Button> : <p className="text-xs text-muted-foreground">Envio anterior sem manutenção vinculada.</p>}
         <p className="whitespace-pre-wrap">Motivo: {record.motivo}</p>
         {record.canceladaEm && <><p>Cancelamento: {record.canceladaEm.toLocaleString("pt-BR")} · {record.canceladaPor}</p><p className="whitespace-pre-wrap">Justificativa: {record.motivoCancelamento}</p></>}
+        <WarrantyRevisionHistory key={`${record.id}-${record.revisionCount || 0}`} warrantyId={record.id} count={record.revisionCount} />
         {record.retornadaEm && <>
+          {hasPermission(["admin"]) && <Button variant="outline" size="sm" onClick={() => setCorrection(record)}>Retificar retorno da garantia</Button>}
           <p>Retorno: {record.retornadaEm.toLocaleString("pt-BR")} · {record.retornadaPor}</p>
           <p>Situação no retorno: {record.situacaoRetorno}</p>
           {record.condicaoRetorno && <p>Condição no retorno: {record.condicaoRetorno}</p>}
@@ -44,5 +53,5 @@ export function WarrantyHistory({ equipment, onViewLinked }: { equipment: Equipm
         </>}
       </div>)}
     </CardContent>
-  </Card>
+  </Card>{correction && original && <WarrantyDialog key={correction.id} equipment={original} correction={correction} situations={live.situations} operators={live.operators} onClose={() => setCorrection(null)} />}</>
 }

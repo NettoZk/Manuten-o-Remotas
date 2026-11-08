@@ -25,6 +25,7 @@ beforeEach(async () => {
   const response = await fetch("http://127.0.0.1:8181/emulator/v1/projects/demo-remotas-history/databases/(default)/documents", { method: "DELETE" })
   expect(response.ok).toBe(true)
   const batch = db.batch()
+  batch.set(db.collection("users").doc(actor.id), { nome: actor.nome, username: actor.username, tipo: actor.tipo, ativo: true, criadoEm: Timestamp.now() })
   for (const [collection, names] of Object.entries({ operators: ["Claro"], equipment_status: ["Nova", "Triagem", "Manutenção", "Recuperada", "Enviado para Garantia", "Separado para garantia"], defects: ["Sem comunicação"], services: ["Teste de bancada"] })) {
     names.forEach((nome, index) => batch.set(db.collection(collection).doc(`ref-${index}`), { nome, ativo: true }))
   }

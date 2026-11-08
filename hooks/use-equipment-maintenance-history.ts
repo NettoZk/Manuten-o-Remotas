@@ -4,7 +4,7 @@ import { useLiveData } from "@/contexts/live-data-context"
 import { getMaintenancesByEquipment } from "@/lib/services"
 import type { Maintenance } from "@/lib/types"
 
-export function useEquipmentMaintenanceHistory(number?: string) {
+export function useEquipmentMaintenanceHistory(number?: string, recordRevision?: number) {
   const live = useLiveData()
   const [records, setRecords] = useState<Maintenance[]>([])
   const [loading, setLoading] = useState(false)
@@ -18,8 +18,8 @@ export function useEquipmentMaintenanceHistory(number?: string) {
     setLoading(true)
     getMaintenancesByEquipment(number).then((data) => { if (active) setRecords(data) }).catch(() => { if (active) setError(true) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [number, revision, attempt])
-  const byId = new Map(records.filter((item) => item.status === "finalizada").map((item) => [item.id, item]))
+  }, [number, revision, attempt, recordRevision])
+  const byId = new Map(records.filter((item) => item.status !== "em_andamento").map((item) => [item.id, item]))
   for (const item of live.maintenances) if (item.numeroRemota === number) byId.set(item.id, item)
   return { records: [...byId.values()].sort((a, b) => b.dataEntrada.getTime() - a.dataEntrada.getTime()), loading, error, retry: () => setAttempt((value) => value + 1) }
 }

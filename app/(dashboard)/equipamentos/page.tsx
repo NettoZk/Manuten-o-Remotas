@@ -26,9 +26,15 @@ import { DeleteEquipmentDialog } from "@/components/delete-equipment-dialog"
 import { ImportEquipmentDialog } from "@/components/import-equipment-dialog"
 import { WarrantyDialog } from "@/components/warranty-dialog"
 import { WarrantyPreparationActions } from "@/components/warranty-preparation-actions"
+import { EquipmentRecordActions } from "@/components/equipment-record-actions"
+import { WarrantyDispatchCorrection } from "@/components/warranty-corrections"
+import { PhysicalMovementActions } from "@/components/physical-movement-actions"
+import { EquipmentRecurrence } from "@/components/recurrence-panel"
 import { WarrantyHistory } from "@/components/warranty-history"
 import { BulkMovementDialog } from "@/components/bulk-movement-dialog"
 import { EquipmentTimeline } from "@/components/equipment-timeline"
+import { MaintenanceActions } from "@/components/maintenance-actions"
+import { MaintenanceRevisionHistory } from "@/components/maintenance-rectification"
 import { useEquipmentMaintenanceHistory } from "@/hooks/use-equipment-maintenance-history"
 import { warrantyWaitLabel } from "@/lib/warranty-wait"
 import type { BulkAction } from "@/lib/bulk-movements"
@@ -53,6 +59,7 @@ export default function EquipmentsPage() {
   const equipments = live.equipments
   const loading = live.loading
   const [search, setSearch] = useState("")
+  useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("remota") || "") }, [])
   const [registrationFilter, setRegistrationFilter] = useState<EquipmentRegistrationFilter>("todas")
   const detailsRef = useRef<HTMLDivElement>(null)
   const [warrantyEquipmentId, setWarrantyEquipmentId] = useState<string | null>(null)
@@ -68,7 +75,7 @@ export default function EquipmentsPage() {
   const awaitingDispatchCount = equipments.filter((item) => item.estadoRegistro !== "inativo" && item.garantia?.status === "separada").length
   function openBulk(action?: BulkAction) { setBulkInitialAction(action); setShowBulkMovement(true) }
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null)
-  const history = useEquipmentMaintenanceHistory(selectedEquipment?.numeroRemota)
+  const history = useEquipmentMaintenanceHistory(selectedEquipment?.numeroRemota, selectedEquipment?.operationVersion)
   const equipmentHistory = history.records
   const loadingHistory = history.loading
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
@@ -92,6 +99,14 @@ export default function EquipmentsPage() {
   const [showImportDialog, setShowImportDialog] = useState(false)
 
   const selectedId = selectedEquipment?.id
+  const openedFromLink = useRef(false)
+  useEffect(() => {
+    if (openedFromLink.current) return
+    const query = new URLSearchParams(window.location.search)
+    if (query.get("ver") !== "1") return
+    const equipment = live.equipments.find((item) => item.numeroRemota === query.get("remota") && !item.cadastroAnulado)
+    if (equipment) { openedFromLink.current = true; setSelectedEquipment(equipment); setShowDetailsDialog(true) }
+  }, [live.equipments])
   useEffect(() => {
     if (!selectedId) return
     const current = live.equipments.find((item) => item.id === selectedId)
@@ -468,7 +483,11 @@ export default function EquipmentsPage() {
 
               {canMove && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status === "separada" && <div className="flex flex-wrap gap-2"><WarrantyPreparationActions equipment={selectedEquipment} /></div>}
               {warrantyWaitLabel(selectedEquipment) && <p className="text-sm text-muted-foreground">{warrantyWaitLabel(selectedEquipment)}</p>}
-              <EquipmentTimeline key={selectedEquipment.id} equipmentId={selectedEquipment.id} />
+              {isAdmin && <EquipmentRecordActions equipment={selectedEquipment} />}
+              {isAdmin && <WarrantyDispatchCorrection equipment={selectedEquipment} />}
+              <PhysicalMovementActions key={`physical-${selectedEquipment.id}`} equipment={selectedEquipment} />
+              <EquipmentRecurrence key={`recurrence-${selectedEquipment.id}-${selectedEquipment.operationVersion || 0}`} equipmentId={selectedEquipment.id} />
+              <EquipmentTimeline key={`timeline-${selectedEquipment.id}-${selectedEquipment.operationVersion || 0}`} equipmentId={selectedEquipment.id} />
               {history.error && <p role="alert" className="text-sm text-destructive">Não foi possível carregar o histórico de atendimentos. <button className="underline" onClick={history.retry}>Tentar novamente</button></p>}
               {isAdmin && selectedEquipment.estadoRegistro !== "inativo" && selectedEquipment.garantia?.status !== "separada" && (selectedEquipment.garantia?.status === "enviada" ? <Button variant="outline" onClick={() => setWarrantyEquipmentId(selectedEquipment.id)}><ShieldCheck className="mr-2 h-4 w-4" />Registrar retorno da garantia</Button> : <div className="space-y-2 text-sm"><p className="text-muted-foreground">Para encaminhar à garantia, conclua a avaliação em manutenção como Separado para garantia. Depois, confirme a saída física em Equipamentos.</p><Button variant="outline" asChild><Link href={`/manutencao?remota=${encodeURIComponent(selectedEquipment.numeroRemota)}`}>Abrir procedimento de manutenção</Link></Button></div>)}
               <WarrantyHistory equipment={selectedEquipment} onViewLinked={(id) => {
@@ -531,12 +550,14 @@ export default function EquipmentsPage() {
                                   )}
                                   {maintenance.status === "finalizada"
                                     ? "Finalizada"
-                                    : "Em andamento"}
+                                    : maintenance.status === "cancelada" ? "Cancelada" : "Em andamento"}
                                 </span>
                               </div>
                               <p className="text-sm text-muted-foreground">
                                 Técnico: <span className="text-foreground">{maintenance.tecnicoNome}</span>
                               </p>
+                              <MaintenanceActions equipment={selectedEquipment} maintenance={maintenance} />
+                              <MaintenanceRevisionHistory maintenance={maintenance} />
                               {maintenance.defeitoEncontrado && (
                                 <p className="text-sm text-muted-foreground">
                                   Defeito encontrado:{" "}

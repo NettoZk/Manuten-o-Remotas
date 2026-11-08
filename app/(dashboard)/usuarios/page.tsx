@@ -90,7 +90,7 @@ export default function UsersPage() {
       toast.success("Usuario excluido com sucesso")
     } catch (error) {
       console.error("[v0] Erro ao excluir usuario:", error)
-      toast.error("Erro ao excluir usuario")
+      toast.error(error instanceof Error ? error.message : "Erro ao excluir usuario")
     } finally {
       setDeletingUser(null)
     }
@@ -381,7 +381,7 @@ function EditUserForm({
       onSuccess()
     } catch (error) {
       console.error("[v0] Erro ao atualizar usuario:", error)
-      toast.error("Erro ao atualizar usuario")
+      toast.error(error instanceof Error ? error.message : "Erro ao atualizar usuario")
     } finally {
       setIsLoading(false)
     }

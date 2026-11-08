@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "sonner"
-import { deleteEquipment, archiveEquipment, hasMaintenanceHistory } from "@/lib/services"
+import { deleteEquipment, archiveEquipment, hasEquipmentHistory } from "@/lib/services"
 import type { Equipment } from "@/lib/types"
 import { useLiveData } from "@/contexts/live-data-context"
 import { useAuth } from "@/contexts/auth-context"
@@ -42,10 +42,10 @@ export function DeleteEquipmentDialog({
     let active = true
     if (!open || !equipment) return
     setChecking(true); setHistoryError(false)
-    hasMaintenanceHistory(equipment.numeroRemota).then((value) => { if (active) setHistorical(value) }).catch(() => { if (active) setHistoryError(true) }).finally(() => { if (active) setChecking(false) })
+    hasEquipmentHistory(equipment.id).then((value) => { if (active) setHistorical(value) }).catch(() => { if (active) setHistoryError(true) }).finally(() => { if (active) setChecking(false) })
     return () => { active = false }
   }, [open, equipment])
-  const hasHistory = equipment ? Boolean(equipment.garantia || equipment.remotaAnteriorId || equipment.substituidaPorId || historical) : null
+  const hasHistory = equipment ? Boolean(equipment.placement || equipment.garantia || equipment.remotaAnteriorId || equipment.substituidaPorId || historical) : null
 
   const handleConfirm = async () => {
     if (!equipment || !user || checking || historyError) return
@@ -92,12 +92,12 @@ export function DeleteEquipmentDialog({
               {checking ? (
                 <div className="flex items-center gap-2">
                   <Spinner className="h-4 w-4" />
-                  <span>Verificando histórico de manutenção...</span>
+                  <span>Verificando histórico da remota...</span>
                 </div>
               ) : hasHistory ? (
                 <>
                   <div className="rounded-lg bg-warning/10 border border-warning/20 p-3 text-warning">
-                    Esta remota possui histórico de manutenção ou garantia e não pode ser excluída.
+                    Esta remota possui histórico de manutenção, garantia ou movimentação física e não pode ser excluída.
                     O registro será mantido como inativo para preservar os dados.
                   </div>
                   <p>

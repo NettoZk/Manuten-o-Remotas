@@ -14,6 +14,7 @@ import { getBulkRun, runBulkMovements, type BulkReceiptPointer } from "@/lib/ser
 import { actionLabels, buildBulkPreview, bulkActions, checklistKeys, checklistLabels, movementHeaders, movementTemplate, type BulkAction, type BulkPreview, type BulkResult } from "@/lib/bulk-movements"
 import { isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "@/lib/validation"
 import type { Equipment } from "@/lib/types"
+import { MovementChangePreview } from "@/components/movement-change-preview"
 
 export function BulkMovementDialog({ equipments, selectedIds, initialAction, initialSituation, onClose, onCompleted }: { equipments: Equipment[]; selectedIds: string[]; initialAction?: BulkAction; initialSituation?: string; onClose: () => void; onCompleted: (numbers: string[]) => void }) {
   const live = useLiveData()
@@ -23,11 +24,11 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(receiptKey) || "null")
-      if (saved && bulkActions.includes(saved.action) && Array.isArray(saved.pointers) && saved.pointers.length <= 500 && saved.pointers.every((p: BulkReceiptPointer) => typeof p.runId === "string" && Array.isArray(p.numbers))) setLastRun(saved)
+      if (saved && bulkActions.includes(saved.action) && Array.isArray(saved.pointers) && saved.pointers.length <= 500 && saved.pointers.every((p: BulkReceiptPointer) => typeof p.runId === "string" && Array.isArray(p.numbers) && (!p.sourceRows || (Array.isArray(p.sourceRows) && p.sourceRows.length === p.numbers.length && p.sourceRows.every((row) => Number.isInteger(row) && row > 0))))) setLastRun(saved)
     } catch { /* Backup local indisponível. */ }
   }, [receiptKey])
   const isAdmin = hasPermission(["admin"])
-  const actions = bulkActions.filter((action) => isAdmin || action === "iniciar_manutencao" || action === "finalizar_manutencao" || action === "enviar_garantia" || action === "cancelar_separacao")
+  const actions = bulkActions.filter((action) => isAdmin || ["iniciar_manutencao", "finalizar_manutencao", "enviar_garantia", "cancelar_separacao", "movimentar_destino", "confirmar_recebimento"].includes(action))
   const selected = equipments.filter((item) => selectedIds.includes(item.id))
   const [action, setAction] = useState<BulkAction>(initialAction && actions.includes(initialAction) ? initialAction : isAdmin ? "alterar_situacao" : "iniciar_manutencao")
   const [mode, setMode] = useState(selectedIds.length ? "common" : "file")
@@ -70,7 +71,7 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
     setPreview([]); setOutcomes([])
     if (!rows.length) { toast.error("Selecione remotas ou carregue uma planilha com números cadastrados"); return }
     if (rows.length > 500) { toast.error("Divida a carga em lotes de até 500 linhas"); return }
-    setPreview(buildBulkPreview(action, rows, equipments)); setOutcomes([])
+    setPreview(buildBulkPreview(action, rows, equipments).map((item) => ({ ...item, maintenance: live.maintenances.find((maintenance) => maintenance.numeroRemota === item.number) }))); setOutcomes([])
   }
   async function loadFile(file?: File) {
     if (!file) return
@@ -118,7 +119,7 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
       let row = 1
       setAction(lastRun.action)
       setPreview([])
-      setOutcomes(records.flatMap(({ pointer, results }) => pointer.numbers.map((number, index) => ({ ...results[index], number, row: row++ }))))
+      setOutcomes(records.flatMap(({ pointer, results }) => pointer.numbers.map((number, index) => ({ ...results[index], number, row: pointer.sourceRows?.[index] ?? row++ }))))
     } finally { setSaving(false) }
   }
   function downloadOutcome() {
@@ -166,9 +167,11 @@ export function BulkMovementDialog({ equipments, selectedIds, initialAction, ini
           {action === "enviar_garantia" && <p className="rounded-lg border p-3 text-sm">Confirme somente as remotas que estão saindo fisicamente para garantia. A manutenção da separação será usada, sem abrir outro atendimento.</p>}
           {action === "cancelar_separacao" && <>{text("Motivo do cancelamento (mínimo 10 caracteres)", "motivoCancelamento", true)}<p className="text-sm text-muted-foreground">As remotas serão encaminhadas para Triagem. A avaliação e o cancelamento permanecerão registrados.</p></>}
           {action === "arquivar" && <p className="rounded-lg border p-3 text-sm">Os cadastros válidos serão arquivados e deixarão a operação ativa. Seus vínculos e históricos permanecerão disponíveis.</p>}
+          {action === "movimentar_destino" && <>{choice("Tipo de destino", "tipoDestino", ["polo", "estoque"])}{text("Destino", "destino")}{text("Responsável previsto pelo recebimento", "responsavelRecebimento")}{text("Observações da movimentação", "observacoes", true)}<p className="text-xs text-muted-foreground">Confirme na saída física. Cada destino permanecerá em trânsito até a confirmação do recebimento.</p></>}
+          {action === "confirmar_recebimento" && <>{text("Observações do recebimento", "observacoesRecebimento", true)}<p className="text-xs text-muted-foreground">A confirmação registra você como responsável e a data atual. Confira fisicamente as remotas selecionadas.</p></>}
         </div>}
         <Button type="button" variant="outline" onClick={() => validate()}>Validar lote</Button>
-        {!!preview.length && <div className="space-y-2"><p className="text-sm font-medium">{valid.length} válida(s) · {preview.length - valid.length} com impedimento. Somente as linhas válidas serão executadas.</p><div className="max-h-60 overflow-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="p-2">Remota</th><th>Pré-validação</th></tr></thead><tbody>{preview.map((item) => <tr key={item.row} className="border-b"><td className="p-2">{item.number || `Linha ${item.row}`}</td><td className={item.command ? "text-success" : "text-destructive"}>{item.command ? "Pronta para executar" : item.errors.join("; ")}</td></tr>)}</tbody></table></div></div>}
+        {!!preview.length && <div className="space-y-2"><p className="text-sm font-medium">{valid.length} válida(s) · {preview.length - valid.length} com impedimento. Somente as linhas válidas serão executadas.</p><p className="text-xs text-muted-foreground">Confira as alterações por linha. Se o cadastro mudar após a validação, a execução será impedida e exigirá uma nova conferência.</p><div className="max-h-60 overflow-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="p-2">Remota</th><th>Pré-validação</th></tr></thead><tbody>{preview.map((item) => <tr key={item.row} className="border-b"><td className="p-2">{item.number || `Linha ${item.row}`}</td><td className={item.command ? "text-success" : "text-destructive"}>{item.command ? <><span>Pronta para executar</span><MovementChangePreview equipment={item.equipment} command={item.command} maintenance={item.maintenance} /></> : item.errors.join("; ")}</td></tr>)}</tbody></table></div></div>}
         {saving && <p role="status" className="flex items-center gap-2 text-sm"><Spinner className="h-4 w-4" />{done} de {valid.length} movimentações processadas. Aguarde o resultado antes de sair.</p>}
         {!!outcomes.length && <div className="space-y-2"><p className="font-medium">Resultado: {outcomes.filter((item) => item.ok).length} concluída(s) · {outcomes.filter((item) => !item.ok).length} pendente(s)</p><div className="max-h-60 overflow-auto rounded-lg border"><table aria-label="Resultado do lote" className="w-full text-sm"><tbody>{outcomes.map((item) => <tr key={item.row} className="border-b"><td className="p-2">{item.number}</td><td className={item.ok ? "text-success" : "text-destructive"}>{item.ok ? "Concluída" : item.error}</td></tr>)}</tbody></table></div><Button type="button" variant="outline" onClick={downloadOutcome}>Baixar resultado</Button></div>}
       </fieldset>

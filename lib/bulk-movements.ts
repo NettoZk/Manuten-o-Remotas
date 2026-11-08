@@ -1,19 +1,22 @@
 import { z } from "zod"
 import { finalizationSchema, warrantyReturnSchema, isMaintenanceSituation, isWarrantySentSituation, isWarrantySeparatedSituation, isNewSituation } from "./validation"
 import { isWarrantyImeiChangeSituation } from "./equipment-situations"
-import type { Equipment } from "./types"
+import type { Equipment, Maintenance } from "./types"
 
-export const bulkActions = ["alterar_situacao", "iniciar_manutencao", "finalizar_manutencao", "enviar_garantia", "cancelar_separacao", "retornar_garantia", "arquivar"] as const
+export const bulkActions = ["alterar_situacao", "iniciar_manutencao", "finalizar_manutencao", "enviar_garantia", "cancelar_separacao", "retornar_garantia", "arquivar", "movimentar_destino", "confirmar_recebimento"] as const
 export type BulkAction = typeof bulkActions[number]
-export const bulkOperations = ["updateEquipmentSituationManual", "createMaintenance", "finalizeMaintenance", "sendWarranty", "cancelWarrantyPreparation", "returnWarranty", "archiveEquipment"] as const
-export interface BulkCommand { number: string; operation: typeof bulkOperations[number]; args: unknown[] }
+export const bulkOperations = ["dispatchEquipment", "receiveEquipment", "createEquipment", "updateEquipment", "updateEquipmentSituationManual", "createMaintenance", "finalizeMaintenance", "sendWarranty", "cancelWarrantyPreparation", "returnWarranty", "archiveEquipment"] as const
+export interface BulkCommand { number: string; operation: typeof bulkOperations[number]; args: unknown[]; expectedVersion?: number; sourceRow?: number }
+export type BulkTransportCommand = Pick<BulkCommand, "operation" | "args" | "expectedVersion"> & Partial<Pick<BulkCommand, "number" | "sourceRow">>
 export interface BulkResult { ok: boolean; error?: string; result?: unknown; uncertain?: boolean }
-export function bulkRequestBytes(entries: Pick<BulkCommand, "operation" | "args">[], runId = "00000000-0000-4000-8000-000000000000") { return new TextEncoder().encode(JSON.stringify({ args: [entries, runId] })).length }
-export interface BulkPreview { row: number; number: string; command?: BulkCommand; errors: string[] }
-export const actionLabels: Record<BulkAction, string> = { alterar_situacao: "Alterar situação", iniciar_manutencao: "Iniciar manutenção", finalizar_manutencao: "Concluir manutenção / separar para garantia", enviar_garantia: "Confirmar envio para garantia", cancelar_separacao: "Cancelar separação para garantia", retornar_garantia: "Registrar retorno da garantia", arquivar: "Arquivar" }
+export function bulkRequestBytes(entries: BulkTransportCommand[], runId = "00000000-0000-4000-8000-000000000000", executionId = "00000000-0000-4000-8000-000000000000") { return new TextEncoder().encode(JSON.stringify({ args: [entries, runId, executionId] })).length }
+export interface BulkPreview { row: number; number: string; command?: BulkCommand; errors: string[]; equipment?: Equipment; maintenance?: Maintenance }
+export const actionLabels: Record<BulkAction, string> = { alterar_situacao: "Alterar situação", iniciar_manutencao: "Iniciar manutenção", finalizar_manutencao: "Concluir manutenção / separar para garantia", enviar_garantia: "Confirmar envio para garantia", cancelar_separacao: "Cancelar separação para garantia", retornar_garantia: "Registrar retorno da garantia", arquivar: "Arquivar", movimentar_destino: "Movimentar para polo ou estoque", confirmar_recebimento: "Confirmar recebimento" }
 export const checklistKeys = ["leituraSIMCard", "firmwareAtualizado", "sinal", "apnEnergiza", "comunicacaoMedidor", "comunicacaoIRIS"] as const
 export const checklistLabels = ["Leitura do SIM Card", "Firmware atualizado", "Sinal", "APN Energiza", "Comunicação com medidor", "Comunicação com IRIS"]
 export const movementHeaders: Record<BulkAction, string[]> = {
+  movimentar_destino: ["numeroRemota", "tipoDestino", "destino", "responsavelRecebimento", "observacoes"],
+  confirmar_recebimento: ["numeroRemota", "observacoesRecebimento"],
   alterar_situacao: ["numeroRemota", "situacaoRemota", "motivoAlteracaoSituacao"],
   iniciar_manutencao: ["numeroRemota", "defeitoRelatado", "defeitoRelatadoOutro"],
   finalizar_manutencao: ["numeroRemota", "operadoraDepois", "defeitoEncontrado", "defeitoEncontradoOutro", "servicosRealizados", "servicosRealizadosOutro", ...checklistKeys, "situacaoRemota", "motivoGarantia", "observacoes"],
@@ -35,16 +38,26 @@ export function buildBulkPreview(action: BulkAction, rows: Record<string, unknow
       if (!number) throw new Error("Informe o número da remota")
       if (numbers.has(number)) throw new Error("Número repetido no mesmo lote")
       numbers.add(number)
-      const equipment = equipments.find((item) => item.numeroRemota === number)
+      const equipment = equipments.find((item) => item.numeroRemota === number && !item.cadastroAnulado)
       if (!equipment) throw new Error("Remota não encontrada. Cadastre antes de movimentar")
+      entry.equipment = equipment
       if (equipment.estadoRegistro === "inativo") throw new Error("Esta remota está arquivada")
       const locked = Boolean(equipment.manutencaoId || equipment.emManutencaoPor)
+      if (equipment.placement?.status === "em_transito" && action !== "confirmar_recebimento") throw new Error("Confirme o recebimento da remota em trânsito")
       if (equipment.garantia?.status === "enviada" && action !== "retornar_garantia") throw new Error("Registre o retorno da garantia antes desta movimentação")
       if (equipment.garantia?.status === "separada" && action !== "enviar_garantia" && action !== "cancelar_separacao") throw new Error("Confirme o envio ou cancele a separação para garantia antes desta movimentação")
       if (action !== "finalizar_manutencao" && locked) throw new Error("Finalize a manutenção em andamento antes desta movimentação")
       let operation: BulkCommand["operation"]
       let args: unknown[]
-      if (action === "alterar_situacao") {
+      if (action === "movimentar_destino") {
+        const type = z.enum(["polo", "estoque"]).parse(value("tipoDestino").toLowerCase())
+        const destination = z.string().trim().min(2, "Informe o destino").max(160).parse(value("destino"))
+        const recipientName = z.string().trim().min(2, "Informe o responsável previsto pelo recebimento").max(160).parse(value("responsavelRecebimento"))
+        operation = "dispatchEquipment"; args = [equipment.id, { type, destination, recipientName, notes: z.string().max(2000).parse(value("observacoes")) }, equipment.operationVersion || 0]
+      } else if (action === "confirmar_recebimento") {
+        if (equipment.placement?.status !== "em_transito") throw new Error("Não há recebimento pendente")
+        operation = "receiveEquipment"; args = [equipment.id, equipment.placement.id, z.string().max(2000).parse(value("observacoesRecebimento")), equipment.operationVersion || 0]
+      } else if (action === "alterar_situacao") {
         const situation = z.string().trim().min(1, "Informe a situação").max(100).parse(value("situacaoRemota"))
         if (isMaintenanceSituation(situation) || isWarrantySentSituation(situation) || isWarrantySeparatedSituation(situation) || isWarrantyImeiChangeSituation(situation)) throw new Error("Esta situação exige o procedimento de manutenção ou garantia")
         if (equipment.status === "Usada" && isNewSituation(situation)) throw new Error("Remota usada não pode ter situação Nova")
@@ -82,8 +95,8 @@ export function buildBulkPreview(action: BulkAction, rows: Record<string, unknow
         if (changed) targets.add(returnedNumber)
         operation = "returnWarranty"; args = [equipment.id, data]
       } else { operation = "archiveEquipment"; args = [equipment.id] }
-      const command = { number, operation, args }
-      if (bulkRequestBytes([{ operation, args }]) > 28_000) throw new Error("Esta linha excede o tamanho permitido. Reduza os textos")
+      const command = { number, operation, args, expectedVersion: equipment.operationVersion || 0, sourceRow: index + 2 }
+      if (bulkRequestBytes([command]) > 28_000) throw new Error("Esta linha excede o tamanho permitido. Reduza os textos")
       entry.command = command
     } catch (error) {
       entry.errors = error instanceof z.ZodError ? [...new Set(error.issues.map((item) => `${item.path.join(".")}: ${item.message}`))] : [error instanceof Error ? error.message : "Linha inválida"]
